@@ -1,7 +1,7 @@
-import { after, before, describe, test } from 'node:test';
+import { after, before, beforeEach, describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { LoadedRules } from '../../src/file-renames/load-vocabulary.ts';
@@ -68,6 +68,17 @@ describe('planning tools', () => {
     );
   });
 
+  test('plan_renames takes a deletion replaced by a file the batch renames', async () => {
+    const result = await mcp.callTool('plan_renames', {
+      files: [{ from: 'Barret.jpg', to: 'Barret Wallace from FFVII battle model.jpg', confidence: 0.9 }],
+      deletions: [{ title: 'Tifa.jpg', reason: 'low-res copy', replaceWith: 'Barret.jpg' }],
+    });
+    assert.equal(result.isError, false, textOf(result));
+    const manifest = await loadManifest(/Saved manifest ([0-9a-f-]{36})/.exec(textOf(result))![1]!, dir);
+    const deletion = manifest.entries.find((entry) => entry.kind === 'file-delete');
+    assert.equal(deletion?.kind === 'file-delete' ? deletion.replacedBy : undefined, 'File:Barret Wallace from FFVII battle model.jpg');
+  });
+
   test('the summary it returns has no diffs', async () => {
     const result = await mcp.callTool('plan_renames', { files: [{ from: 'Barret.jpg', to: 'Barret Wallace from FFVII battle model.jpg' }] });
     assert.ok(textOf(result).includes('| File renames | 1 |'));
@@ -104,43 +115,106 @@ describe('planning tools', () => {
   });
 });
 
-describe('plan_gallery_cleanup', () => {
+describe('gallery tools', () => {
   // Its own wiki, so the request counts above stay the renames' own.
   const galleries = fakeWorld({
     pages: {
-      'Hero/Gallery': '<gallery>\nOnly here.png\nKept.png\n</gallery>',
+      'Hero/Gallery': '<gallery>\nOnly here.png\nKept.png\n</gallery>\n==Merchandise==\n<gallery>\nFigure.jpg\n</gallery>',
       Hero: '{{Infobox|gallery=true}}\nIntro.\n\n==Gallery==\n{{main|/Gallery}}',
       'Category:Images of Hero': '{{category}}',
       'File:Only here.png': '',
       'File:Kept.png': 'Kept.',
+      'File:Figure.jpg': 'A figure.',
     },
-    shownOn: { 'File:Only here.png': ['Hero/Gallery'], 'File:Kept.png': ['Hero/Gallery', 'Hero'] },
+    shownOn: { 'File:Only here.png': ['Hero/Gallery'], 'File:Kept.png': ['Hero/Gallery', 'Hero'], 'File:Figure.jpg': ['Hero/Gallery'] },
     linkedFrom: { 'Hero/Gallery': ['Hero'] },
   });
   let gallery: TestClient;
+  let answersDir: string;
   before(async () => {
-    gallery = await connect(createServer({ profile: await loadProfile('finalfantasy'), client: galleries, rules, manifestsDir: dir }));
+    answersDir = await mkdtemp(join(tmpdir(), 'wiki-agent-answers-'));
+    gallery = await connect(createServer({ profile: await loadProfile('finalfantasy'), client: galleries, rules, manifestsDir: dir, answersDir }));
   });
   after(() => gallery.close());
+  // Answers are kept per wiki, so each test starts with none.
+  beforeEach(() => rm(join(answersDir, 'finalfantasy.json'), { force: true }));
 
-  test('saves the manifest, and says to show the files to delete first', async () => {
+  const idOf = (result: { content: Array<{ type: string; text?: string }> }) => {
+    const id = /Saved manifest ([0-9a-f-]{36})/.exec(textOf(result))?.[1];
+    assert.ok(id !== undefined, textOf(result));
+    return id;
+  };
+  const summary = (manifest: Awaited<ReturnType<typeof loadManifest>>) =>
+    manifest.entries.map((entry) => [entry.id, entry.kind, 'title' in entry ? entry.title : entry.kind === 'question' ? entry.about : '', entry.kind !== 'question' && entry.approved]);
+
+  test('plan_gallery_cleanup saves the manifest, and says to show the files to delete first', async () => {
     const result = await gallery.callTool('plan_gallery_cleanup', { galleries: ['Hero/Gallery'] });
     assert.equal(result.isError, false, textOf(result));
     assert.match(textOf(result), /1 file\(s\) to delete: show them to the user with get_file_info/);
-    const id = /Saved manifest ([0-9a-f-]{36})/.exec(textOf(result))?.[1];
-    assert.ok(id !== undefined);
-    const manifest = await loadManifest(id, dir);
-    assert.deepEqual(
-      manifest.entries.map((entry) => [entry.id, entry.kind, 'title' in entry ? entry.title : '', entry.kind !== 'question' && entry.approved]),
-      [
-        ['d1', 'file-delete', 'File:Only here.png', false],
-        ['p1', 'page-delete', 'Hero/Gallery', false],
-        ['t1', 'category-tag', 'File:Kept.png', true],
-      ],
-    );
+    const manifest = await loadManifest(idOf(result), dir);
+    assert.deepEqual(summary(manifest), [
+      ['q1', 'question', 'File:Figure.jpg', false],
+      ['d1', 'file-delete', 'File:Only here.png', false],
+      ['p1', 'page-delete', 'Hero/Gallery', false],
+      ['t1', 'category-tag', 'File:Kept.png', true],
+      ['t2', 'category-tag', 'File:Figure.jpg', true],
+    ]);
+    assert.deepEqual(manifest.request, { task: 'gallery-cleanup', galleries: ['Hero/Gallery'] });
     assert.deepEqual(manifest.edits.map((edit) => [edit.title, edit.text]), [
       ['Hero', '{{Infobox}}\nIntro.'],
       ['File:Kept.png', 'Kept.\n\n[[Category:Images of Hero]]'],
+      ['File:Figure.jpg', 'A figure.\n\n[[Category:Images of Hero]]'],
     ]);
+  });
+
+  test('answer_question saves answers; replan applies them and keeps approvals', async () => {
+    const first = idOf(await gallery.callTool('plan_gallery_cleanup', { galleries: ['Hero/Gallery'] }));
+    assert.equal((await gallery.callTool('set_approval', { id: first, entries: ['d1'], approved: true })).isError, false);
+    const answered = await gallery.callTool('answer_question', { id: first, answers: [{ question: 'q1', choice: 'keep' }] });
+    assert.equal(answered.isError, false, textOf(answered));
+    assert.match(textOf(answered), /File:Figure\.jpg → keep/);
+
+    const replanned = await gallery.callTool('replan', { id: first });
+    assert.match(textOf(replanned), new RegExp(`replacing ${first}`));
+    const second = await loadManifest(idOf(replanned), dir);
+    assert.notEqual(second.id, first);
+    assert.deepEqual(summary(second), [
+      ['d1', 'file-delete', 'File:Only here.png', true],
+      ['p1', 'page-delete', 'Hero/Gallery', false],
+      ['t1', 'category-tag', 'File:Kept.png', true],
+      ['t2', 'category-tag', 'File:Figure.jpg', true],
+    ]);
+  });
+
+  test('answers in the user\'s own words are asked again, with the answer', async () => {
+    const first = idOf(await gallery.callTool('plan_gallery_cleanup', { galleries: ['Hero/Gallery'] }));
+    await gallery.callTool('answer_question', { id: first, answers: [{ question: 'q1', choice: 'other', text: 'Put it in the Merchandise section.' }] });
+    const second = await loadManifest(idOf(await gallery.callTool('replan', { id: first })), dir);
+    const question = second.entries[0];
+    assert.ok(question?.kind === 'question');
+    assert.equal(question.answer, 'Put it in the Merchandise section.');
+  });
+
+  test('answer_question refuses unknown questions, choices not offered, and "other" without words', async () => {
+    const id = idOf(await gallery.callTool('plan_gallery_cleanup', { galleries: ['Hero/Gallery'] }));
+    const refused = await gallery.callTool('answer_question', {
+      id,
+      answers: [
+        { question: 'q9', choice: 'keep' },
+        { question: 'd1', choice: 'keep' },
+        { question: 'q1', choice: 'other' },
+      ],
+    });
+    assert.equal(refused.isError, true);
+    assert.match(textOf(refused), /q9 isn't a question/);
+    assert.match(textOf(refused), /d1 isn't a question/);
+    assert.match(textOf(refused), /q1: "other" needs the user's words/);
+  });
+
+  test('replan refuses manifests that do not say what they were planned from', async () => {
+    const result = await mcp.callTool('plan_renames', { files: [{ from: 'Barret.jpg', to: 'Barret Wallace from FFVII battle model.jpg' }] });
+    const refused = await gallery.callTool('replan', { id: idOf(result) });
+    assert.equal(refused.isError, true);
+    assert.match(textOf(refused), /only gallery-cleanup manifests can be planned again/);
   });
 });

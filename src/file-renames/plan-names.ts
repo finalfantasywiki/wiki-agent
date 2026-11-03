@@ -39,8 +39,13 @@ export interface PlannedName {
   /** Any error blocks the rename. */
   readonly errors: readonly PlanIssue[];
   readonly warnings: readonly PlanIssue[];
+  /** The source file's page on the wiki, and a thumbnail of it, for review. */
+  readonly pageUrl: string | undefined;
+  readonly thumbUrl: string | undefined;
 }
 
+/** Width of the thumbnail kept for review, as in the gallery cleanup. */
+const THUMB_WIDTH = 160;
 /** How many numbered candidates to check per name in one request. */
 const NUMBERS_PER_ROUND = 5;
 /** Give up numbering past this, which would mean something is badly wrong. */
@@ -53,7 +58,7 @@ const TWIN_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'];
 
 export async function planNames(client: WikiClient, rules: NamingRules, proposals: readonly RenameProposal[]): Promise<PlannedName[]> {
   const sources = proposals.map((proposal) => withFilePrefix(proposal.from));
-  const infos = await getFileInfo(client, sources);
+  const infos = await getFileInfo(client, sources, THUMB_WIDTH);
   const seenSources = new Set<string>();
 
   // Validate first; numbering only applies to names that parse.
@@ -108,6 +113,8 @@ export async function planNames(client: WikiClient, rules: NamingRules, proposal
       confidence: draft.proposal.confidence,
       errors: draft.errors,
       warnings,
+      pageUrl: infos[index]?.pageUrl,
+      thumbUrl: infos[index]?.thumbUrl,
     };
   });
 }

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { buildManifest, loadManifest, ManifestError, saveManifest, setApproval, type ManifestInput } from '../../src/plans/manifest.ts';
+import { buildManifest, carryApprovals, loadManifest, ManifestError, saveManifest, setApproval, type ManifestInput } from '../../src/plans/manifest.ts';
 import type { ReferencePlan } from '../../src/plans/reference-edits.ts';
 
 const ID = '3f1c2a64-8d0e-4c5b-9a7e-2b6d1f0c9e88';
@@ -88,6 +88,23 @@ describe('buildManifest', () => {
     assert.equal(manifest.created, '2026-11-02T12:00:00.000Z');
   });
 
+  test('file renames keep their preview URLs, and leave out missing ones', () => {
+    const manifest = buildManifest(
+      {
+        ...input,
+        files: [
+          rename('File:Barret.jpg', 'File:Barret Wallace from FFVII battle render.jpg', { pageUrl: 'https://wiki.test/wiki/File:Barret.jpg', thumbUrl: 'https://img.test/thumb/Barret.jpg' }),
+          rename('File:Tifa-Hot.jpg', 'File:Tifa original attire from Advent Children promo render 1.jpg'),
+        ],
+      },
+      { id: ID },
+    );
+    const [barret, tifa] = manifest.entries.filter((entry) => entry.kind === 'file-rename');
+    assert.equal(barret?.pageUrl, 'https://wiki.test/wiki/File:Barret.jpg');
+    assert.equal(barret?.thumbUrl, 'https://img.test/thumb/Barret.jpg');
+    assert.ok(tifa !== undefined && !('pageUrl' in tifa) && !('thumbUrl' in tifa));
+  });
+
   test('a missing source becomes a question for the user', () => {
     const question = build().entries.find((entry) => entry.id === 'q2');
     assert.deepEqual(question, {
@@ -112,6 +129,37 @@ describe('buildManifest', () => {
     assert.deepEqual(codes('f2', 'errors'), ['blocked']);
     assert.deepEqual(codes('f3', 'warnings'), ['unused']);
     assert.deepEqual(codes('d2', 'errors'), ['in-use']);
+  });
+
+  test('a replacement is a deletion that names its replacement, blocked like a rename, never approved', () => {
+    const manifest = buildManifest(
+      {
+        ...input,
+        files: [],
+        categories: [],
+        questions: [],
+        deletions: [
+          { title: 'File:Reno-artwork.jpg', reason: 'low-res copy', usedBy: [], replacedBy: 'File:Reno from FFVII concept art.png' },
+          { title: 'File:Rufus-shinra-ff7.jpg', reason: 'low-res copy', usedBy: [], replacedBy: 'File:Rufus from FFVII concept art.png' },
+          { title: 'File:Gone.jpg', reason: 'r', usedBy: [], replacedBy: 'File:Missing.png', errors: [{ code: 'replacement-missing', message: 'File:Missing.png does not exist' }] },
+        ],
+        references: { ...references, blocked: ['File:Rufus-shinra-ff7.jpg'] },
+      },
+      { id: ID },
+    );
+    const [reno, rufus, gone] = manifest.entries.filter((entry) => entry.kind === 'file-delete');
+    assert.equal(reno?.replacedBy, 'File:Reno from FFVII concept art.png');
+    assert.deepEqual(reno?.errors, []);
+    assert.equal(reno?.approved, false);
+    assert.deepEqual(rufus?.errors.map((error) => error.code), ['blocked']);
+    assert.deepEqual(gone?.errors.map((error) => error.code), ['replacement-missing']);
+  });
+
+  test('a plain deletion has no replacedBy, and isn\'t blocked by the reference plan', () => {
+    const manifest = buildManifest({ ...input, deletions: [{ title: 'File:Unused.png', reason: 'r', usedBy: [] }], references: { ...references, blocked: ['File:Unused.png'] } }, { id: ID });
+    const deletion = manifest.entries.find((entry) => entry.kind === 'file-delete');
+    assert.ok(deletion !== undefined && !('replacedBy' in deletion));
+    assert.deepEqual(deletion?.errors, []);
   });
 
   test('old category pages being replaced get no edits', () => {
@@ -189,6 +237,36 @@ describe('saving and loading', () => {
 
   test('IDs must be UUIDs, so they cannot point outside the folder', async () => {
     await assert.rejects(loadManifest('../package', '/tmp'), /isn't a manifest ID/);
+  });
+});
+
+describe('questions with choices and answers', () => {
+  const manifest = buildManifest(
+    {
+      wiki: 'finalfantasy',
+      api: 'https://finalfantasy.fandom.com/api.php',
+      questions: [
+        { about: 'File:Figure.jpg', question: 'Add it to Hero.', choices: ['keep', 'delete'] },
+        { about: 'File:Scan.png', question: 'Add it to Guide book.', answer: 'Ask the uploader first.' },
+        { about: 'Hero/Gallery', question: 'Which file?' },
+      ],
+      references: { edits: [], usages: [], leftovers: [], blocked: [] },
+    },
+    { id: ID, now: NOW },
+  );
+
+  test('keep them, and add no empty fields', () => {
+    assert.deepEqual(manifest.entries, [
+      { kind: 'question', id: 'q1', about: 'File:Figure.jpg', question: 'Add it to Hero.', choices: ['keep', 'delete'] },
+      { kind: 'question', id: 'q2', about: 'File:Scan.png', question: 'Add it to Guide book.', answer: 'Ask the uploader first.' },
+      { kind: 'question', id: 'q3', about: 'Hero/Gallery', question: 'Which file?' },
+    ]);
+  });
+
+  test('survive a save and load', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'manifest-'));
+    await saveManifest(manifest, dir);
+    assert.deepEqual(await loadManifest(ID, dir), manifest);
   });
 });
 
@@ -271,5 +349,44 @@ describe('pages to create and delete, and category tags', () => {
     const dir = await mkdtemp(join(tmpdir(), 'manifest-'));
     await saveManifest(manifest, dir);
     assert.deepEqual(await loadManifest(ID, dir), manifest);
+  });
+});
+
+describe('carryApprovals', () => {
+  const plan = (deletions: Array<{ title: string; usedBy: string[] }>, id: string) =>
+    buildManifest(
+      {
+        wiki: 'finalfantasy',
+        api: 'https://finalfantasy.fandom.com/api.php',
+        request: { task: 'gallery-cleanup', galleries: ['Hero/Gallery'] },
+        deletions: deletions.map((deletion) => ({ ...deletion, reason: 'r' })),
+        categoryTags: [{ title: 'File:Kept.png', category: 'Category:Images of Hero' }],
+        references: { edits: [], usages: [], leftovers: [], blocked: [] },
+      },
+      { id, now: NOW },
+    );
+  const before = setApproval(
+    setApproval(plan([{ title: 'File:A.png', usedBy: [] }, { title: 'File:B.png', usedBy: [] }], ID), ['d1', 'd2'], true),
+    ['t1'],
+    false,
+  );
+  const next = carryApprovals(before, plan([{ title: 'File:B.png', usedBy: ['Hero'] }, { title: 'File:A.png', usedBy: [] }, { title: 'File:C.png', usedBy: [] }], '00000000-0000-4000-8000-000000000001'));
+  const approval = (title: string) => {
+    const entry = next.entries.find((candidate) => candidate.kind !== 'question' && 'title' in candidate && candidate.title === title);
+    return entry === undefined || entry.kind === 'question' ? undefined : [entry.id, entry.approved];
+  };
+
+  test('the same change keeps its approval, whatever its new ID', () => {
+    assert.deepEqual(approval('File:A.png'), ['d2', true]);
+    assert.deepEqual(approval('File:Kept.png'), ['t1', false]);
+  });
+
+  test('an entry that now has errors, or is new, keeps its default', () => {
+    assert.deepEqual(approval('File:B.png'), ['d1', false]);
+    assert.deepEqual(approval('File:C.png'), ['d3', false]);
+  });
+
+  test('the request it was planned from is kept', () => {
+    assert.deepEqual(next.request, { task: 'gallery-cleanup', galleries: ['Hero/Gallery'] });
   });
 });

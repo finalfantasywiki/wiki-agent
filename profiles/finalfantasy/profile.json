@@ -2,6 +2,7 @@
   "name": "finalfantasy",
   "api": "https://finalfantasy.fandom.com/api.php",
   "userAgentContact": "User:Technobliterator on finalfantasy.fandom.com",
+  "imageHosts": ["https://static.wikia.nocookie.net"],
   "botPolicy": {
     "url": null,
     "note": "No local bot policy; bot approved by bureaucrat User:Technobliterator"
@@ -38,6 +39,7 @@
     "categoryText": "{{category |contains=all |namespace=file |related=[[{subject}]] }}\n[[Category:Images by character]]",
     "linkParameters": ["gallery"],
     "pointerTemplates": ["main", "see also", "see"],
-    "moveSections": ["merchandise"]
+    "moveSections": ["merchandise"],
+    "fileHomes": { "ultimania omega scan": "Final Fantasy VII Ultimania Omega" }
   }
 }

@@ -1,3 +1,5 @@
 node_modules/
 out/
 manifests/
+answers/
+profiles/*/credentials.json

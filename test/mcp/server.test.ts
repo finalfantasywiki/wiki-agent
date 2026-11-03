@@ -60,6 +60,7 @@ describe('MCP server', () => {
   test('lists the tools; only the ones that save manifests are not read-only', async () => {
     const { tools } = (await mcp.request('tools/list')) as { tools: Array<{ name: string; annotations?: { readOnlyHint?: boolean } }> };
     assert.deepEqual(tools.map((tool) => tool.name).sort(), [
+      'answer_question',
       'find_usages',
       'get_file_info',
       'get_pages',
@@ -67,11 +68,13 @@ describe('MCP server', () => {
       'list_category_members',
       'plan_gallery_cleanup',
       'plan_renames',
+      'replan',
+      'review_manifest',
       'set_approval',
       'show_manifest',
       'validate_name',
     ]);
-    assert.deepEqual(tools.filter((tool) => tool.annotations?.readOnlyHint !== true).map((tool) => tool.name).sort(), ['plan_gallery_cleanup', 'plan_renames', 'set_approval']);
+    assert.deepEqual(tools.filter((tool) => tool.annotations?.readOnlyHint !== true).map((tool) => tool.name).sort(), ['answer_question', 'plan_gallery_cleanup', 'plan_renames', 'replan', 'set_approval']);
   });
 
   test('list_category_members', async () => {

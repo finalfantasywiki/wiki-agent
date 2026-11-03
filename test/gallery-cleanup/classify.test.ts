@@ -15,6 +15,7 @@ Only here.png
 Shared gallery.png
 On article.png
 Linked.png
+Gallery link.png
 Missing.png
 Only here.png|The same file again.
 </gallery>
@@ -33,6 +34,7 @@ const FILES: Record<string, { shown: string[]; links?: string[]; redirects?: str
   'File:Shared gallery.png': { shown: [GALLERY, 'Villain/Gallery'], categories: [CATEGORY] },
   'File:On article.png': { shown: [GALLERY, 'Hero'] },
   'File:Linked.png': { shown: [GALLERY], links: ['User:Fan', 'Villain/Gallery'] },
+  'File:Gallery link.png': { shown: [GALLERY], links: ['Villain/Gallery', 'Talk:Hero/Gallery'] },
   'File:Figure.jpg': { shown: [GALLERY] },
   'File:Figure on article.jpg': { shown: [GALLERY, 'Hero'], categories: [CATEGORY] },
 };
@@ -64,6 +66,7 @@ describe('classifyGalleryImages', async () => {
       'File:Shared gallery.png',
       'File:On article.png',
       'File:Linked.png',
+      'File:Gallery link.png',
       'File:Missing.png',
       'File:Figure.jpg',
       'File:Figure on article.jpg',
@@ -76,11 +79,16 @@ describe('classifyGalleryImages', async () => {
       'Only here.png': 'delete',
       'Shared gallery.png': 'delete',
       'On article.png': 'keep',
-      'Linked.png': 'delete',
+      'Linked.png': 'linked',
+      'Gallery link.png': 'delete',
       'Missing.png': 'missing',
       'Figure.jpg': 'move',
       'Figure on article.jpg': 'keep',
     });
+  });
+
+  test('only links from pages that stay keep a file: not galleries or their talk pages', () => {
+    assert.deepEqual(get('Gallery link.png').linkedFrom, []);
   });
 
   test('galleries, other pages, links and redirects', () => {

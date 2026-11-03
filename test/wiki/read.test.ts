@@ -71,7 +71,7 @@ describe('getPages', () => {
 describe('getFileInfo', () => {
   test('merges a page split across continued responses', async () => {
     const client = fakeWiki((params) => {
-      const info = { url: 'https://img/A.png', thumburl: 'https://img/A-300.png', width: 10, height: 20, size: 30, mime: 'image/png', sha1: 'abc', user: 'Uploader', timestamp: 'T' };
+      const info = { url: 'https://img/A.png', thumburl: 'https://img/A-300.png', descriptionurl: 'https://wiki/File:A.png', width: 10, height: 20, size: 30, mime: 'image/png', sha1: 'abc', user: 'Uploader', timestamp: 'T' };
       return params.has('clcontinue')
         ? { query: { pages: [{ title: 'File:A.png', categories: [{ title: 'Category:Two' }] }] } }
         : {
@@ -87,6 +87,7 @@ describe('getFileInfo', () => {
       exists: true,
       url: 'https://img/A.png',
       thumbUrl: 'https://img/A-300.png',
+      pageUrl: 'https://wiki/File:A.png',
       width: 10,
       height: 20,
       size: 30,

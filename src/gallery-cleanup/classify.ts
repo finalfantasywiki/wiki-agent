@@ -6,13 +6,15 @@
 //   (merchandise, by default): kept, to be added to the article by hand;
 // - shown anywhere else: kept, and it should be in the character's image
 //   category (e.g. Category:Images of Tifa Lockhart) so it isn't lost;
+// - linked from a page that isn't a gallery ([[:File:X|(Scan)]]): kept too,
+//   since that page cites it, and pointed out so it can be shown somewhere;
 // - the file doesn't exist: reported, never guessed at.
 
 import { getFileInfo, getFileUsages, type PageRef } from '../wiki/read.ts';
 import type { WikiClient } from '../wiki/client.ts';
 import { isGalleryPage, type GalleryImage, type GalleryPage, type Heading } from './gallery-page.ts';
 
-export type Verdict = 'delete' | 'move' | 'keep' | 'missing';
+export type Verdict = 'delete' | 'move' | 'keep' | 'linked' | 'missing';
 
 export interface ClassifiedImage {
   readonly title: string;
@@ -24,13 +26,19 @@ export interface ClassifiedImage {
   readonly galleries: readonly string[];
   /** Other pages showing it; any of them keeps the file. */
   readonly shownOn: readonly PageRef[];
-  /** Pages linking to it ([[:File:X]]), except galleries; they'd be red links after a deletion. */
+  /** Pages linking to it ([[:File:X]]), except galleries; any of them keeps the file. */
   readonly linkedFrom: readonly PageRef[];
   /** Redirects to it, deleted along with it. */
   readonly redirects: readonly PageRef[];
   /** Whether it's in the character's image category already. */
   readonly inCategory: boolean;
+  /** For reviewing it: a thumbnail and the file's page. */
+  readonly thumbUrl: string | undefined;
+  readonly pageUrl: string | undefined;
 }
+
+/** Thumbnail width for the review file. */
+const THUMB_WIDTH = 160;
 
 export interface ClassifyOptions {
   /** The category kept images belong in, e.g. "Category:Images of Tifa Lockhart". */
@@ -47,20 +55,23 @@ export async function classifyGalleryImages(client: WikiClient, page: GalleryPag
   for (const image of page.images) if (!firsts.has(image.title)) firsts.set(image.title, image);
   const unique = [...firsts.values()];
   const titles = unique.map((image) => image.title);
-  const [infos, usages] = await Promise.all([getFileInfo(client, titles), getFileUsages(client, titles)]);
+  const [infos, usages] = await Promise.all([getFileInfo(client, titles, THUMB_WIDTH), getFileUsages(client, titles)]);
 
   return unique.map((image, index) => {
     const info = infos[index]!;
     const usage = usages.get(image.title)!;
     const galleries = usage.fileUsage.filter((ref) => isGalleryPage(ref.title));
     const shownOn = usage.fileUsage.filter((ref) => !isGalleryPage(ref.title));
+    const linkedFrom = usage.links.filter((ref) => !isGalleryPage(ref.title));
     const verdict: Verdict = !info.exists
       ? 'missing'
       : shownOn.length > 0
         ? 'keep'
-        : image.headings.some((heading) => moveSections.test(heading.text))
-          ? 'move'
-          : 'delete';
+        : linkedFrom.length > 0
+          ? 'linked'
+          : image.headings.some((heading) => moveSections.test(heading.text))
+            ? 'move'
+            : 'delete';
     return {
       title: image.title,
       verdict,
@@ -68,9 +79,11 @@ export async function classifyGalleryImages(client: WikiClient, page: GalleryPag
       caption: image.caption,
       galleries: galleries.map((ref) => ref.title),
       shownOn,
-      linkedFrom: usage.links.filter((ref) => !isGalleryPage(ref.title)),
+      linkedFrom,
       redirects: usage.redirects,
       inCategory: info.categories.includes(options.category),
+      thumbUrl: info.thumbUrl,
+      pageUrl: info.pageUrl,
     };
   });
 }

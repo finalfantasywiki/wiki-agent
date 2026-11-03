@@ -43,7 +43,7 @@ A more specific type ends in one of these (`battle render`, `field sprite`). The
 
 ### Numbers
 
-Don't add numbers; planning does. A file that is alone has no number; files whose names would otherwise be the same, even if only their extensions differ, are numbered as a set from 1. If two files would only differ by extension, look at why: they may be duplicates (delete one), or something tells them apart that belongs in the subject or type.
+Don't add numbers; planning does. A file that is alone has no number; files whose names would otherwise be the same, even if only their extensions differ, are numbered as a set from 1. If two files would only differ by extension, look at why: they may be duplicates (delete the worse one, with `replaceWith` naming the one to keep), or something tells them apart that belongs in the subject or type.
 
 ## Old names say little
 

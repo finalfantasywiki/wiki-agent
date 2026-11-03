@@ -1,10 +1,15 @@
 // Renders a manifest as Markdown for review: a summary, then questions, then
-// each kind of entry with its issues, then what blocks entries (unresolved
+// each kind of entry with its issues (files with a thumbnail and a link to
+// their page, when the manifest has them), then what blocks entries (unresolved
 // usages and leftovers), then every page edit's diff in a collapsible block.
 // Plain string building: GitHub-flavored Markdown, which VS Code and GitHub
 // both preview, including <details>.
 
+import type { Choice } from './answers.ts';
 import type { Manifest, ManifestEntry } from './manifest.ts';
+
+/** How each fixed answer reads to the user. */
+export const CHOICE_LABELS: Record<Choice, string> = { keep: 'keep it and tag it', delete: 'delete it' };
 
 type Entry<K extends ManifestEntry['kind']> = Extract<ManifestEntry, { kind: K }>;
 type Issue = { readonly code: string; readonly message: string };
@@ -35,7 +40,11 @@ export function renderManifest(manifest: Manifest, options: RenderOptions = {}):
 
   if (questions.length > 0) {
     out.push('## Questions', '', 'These need an answer before planning again.', '');
-    for (const question of questions) out.push(`- **${question.id}** · ${question.about}: ${question.question}`);
+    for (const question of questions) {
+      out.push(`- **${question.id}** · ${[thumbnail(question), titleLink(question.about, question)].filter((part) => part !== '').join(' ')}: ${question.question}`);
+      if (question.answer !== undefined) out.push(`  - Your answer: ${question.answer}`);
+      else if (question.choices !== undefined) out.push(`  - Answer: ${[...question.choices.map((choice) => CHOICE_LABELS[choice]), 'or in your own words'].join(' · ')}`);
+    }
     out.push('');
   }
 
@@ -56,10 +65,15 @@ export function renderManifest(manifest: Manifest, options: RenderOptions = {}):
 
   if (files.length > 0) {
     out.push('## File renames', '');
-    out.push('| ID | Approved | From | To | Confidence | Issues |', '|---|---|---|---|---|---|');
+    const images = files.some((file) => file.thumbUrl !== undefined);
+    out.push(
+      images ? '| ID | Approved | Image | From | To | Confidence | Issues |' : '| ID | Approved | From | To | Confidence | Issues |',
+      images ? '|---|---|---|---|---|---|---|' : '|---|---|---|---|---|---|',
+    );
     for (const file of files) {
       const confidence = file.confidence === undefined ? '' : file.confidence.toFixed(2);
-      out.push(row([file.id, mark(file), file.from, file.to, confidence, codes(file)]));
+      const cells = [file.id, mark(file), titleLink(file.from, file), file.to, confidence, codes(file)];
+      out.push(row(images ? [...cells.slice(0, 2), thumbnail(file), ...cells.slice(2)] : cells));
     }
     out.push('');
     const explained = files.filter((file) => file.reason !== undefined || file.errors.length + file.warnings.length > 0);
@@ -75,9 +89,27 @@ export function renderManifest(manifest: Manifest, options: RenderOptions = {}):
 
   if (deletions.length > 0) {
     out.push('## Deletions', '');
-    out.push('| ID | Approved | File | Reason | Issues |', '|---|---|---|---|---|');
-    for (const deletion of deletions) out.push(row([deletion.id, mark(deletion), deletion.title, deletion.reason, codes(deletion)]));
+    const images = deletions.some((deletion) => deletion.thumbUrl !== undefined);
+    const replacements = deletions.some((deletion) => deletion.replacedBy !== undefined);
+    const headings = ['ID', 'Approved', ...(images ? ['Image'] : []), 'File', ...(replacements ? ['Replaced by'] : []), 'Reason', 'Issues'];
+    out.push(row(headings), row(headings.map(() => '---')));
+    for (const deletion of deletions) {
+      out.push(
+        row([
+          deletion.id,
+          mark(deletion),
+          ...(images ? [thumbnail(deletion)] : []),
+          titleLink(deletion.title, deletion),
+          ...(replacements ? [deletion.replacedBy ?? ''] : []),
+          deletion.reason,
+          codes(deletion),
+        ]),
+      );
+    }
     out.push('');
+    const stillUsed = deletions.filter((deletion) => deletion.usedBy.length > 0);
+    for (const deletion of stillUsed) out.push(`- **${deletion.id}** is still used on: ${deletion.usedBy.join(', ')}`);
+    if (stillUsed.length > 0) out.push('');
   }
 
   if (pageCreations.length > 0) {
@@ -157,6 +189,35 @@ function summary(manifest: Manifest): string[] {
     lines.push(kind === 'question' ? row([label[kind], String(count.total), '', '']) : row([label[kind], String(count.total), String(count.approved), String(count.withErrors)]));
   }
   return lines;
+}
+
+type Preview = { readonly pageUrl?: string | undefined; readonly thumbUrl?: string | undefined };
+
+/** The title, linked to its page on the wiki when there's a URL. */
+function titleLink(title: string, preview: Preview): string {
+  return preview.pageUrl === undefined ? title : `[${escapeLinkText(title)}](${escapeUrl(preview.pageUrl)})`;
+}
+
+/** A thumbnail, linked to the file's page; empty without one. */
+// HTML rather than ![](…): image hosts such as Fandom's refuse requests that
+// name another site as the referrer, which Markdown viewers send.
+function thumbnail(preview: Preview): string {
+  if (preview.thumbUrl === undefined) return '';
+  const image = `<img src="${escapeAttribute(escapeUrl(preview.thumbUrl))}" alt="" loading="lazy" referrerpolicy="no-referrer">`;
+  return preview.pageUrl === undefined ? image : `<a href="${escapeAttribute(escapeUrl(preview.pageUrl))}">${image}</a>`;
+}
+
+function escapeAttribute(text: string): string {
+  return escapeHtml(text).replaceAll('"', '&quot;');
+}
+
+function escapeLinkText(text: string): string {
+  return text.replace(/[[\]\\]/g, '\\$&');
+}
+
+/** Parentheses and spaces would end a Markdown link's URL early. */
+function escapeUrl(url: string): string {
+  return url.replaceAll('(', '%28').replaceAll(')', '%29').replaceAll(' ', '%20');
 }
 
 /** ⛔ for entries with errors (they can't be approved), else ✅ or ⬜. */

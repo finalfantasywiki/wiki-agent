@@ -103,9 +103,15 @@ describe('parseProfile', () => {
     ]);
   });
 
+  test('image hosts are optional, and must be URLs', () => {
+    assert.equal(parseProfile(valid, 'test').imageHosts, undefined);
+    assert.deepEqual(parseProfile(withField('imageHosts', ['https://img.test']), 'test').imageHosts, ['https://img.test']);
+    assert.deepEqual(problemsOf(withField('imageHosts', ['img.test'])), ['imageHosts[0] must be a URL (got "img.test")']);
+  });
+
   test('gallery settings are optional, and checked when given', () => {
     assert.equal(parseProfile(valid, 'test').galleries, undefined);
-    const galleries = { imageCategory: 'Category:Images of {subject}', categoryText: '{{category |related=[[{subject}]] }}', linkParameters: ['gallery'], pointerTemplates: ['main'], moveSections: ['merchandise'] };
+    const galleries = { imageCategory: 'Category:Images of {subject}', categoryText: '{{category |related=[[{subject}]] }}', linkParameters: ['gallery'], pointerTemplates: ['main'], moveSections: ['merchandise'], fileHomes: { scan: 'Guide book' } };
     assert.deepEqual(parseProfile(withField('galleries', galleries), 'test').galleries, galleries);
     assert.deepEqual(problemsOf(withField('galleries', { ...galleries, imageCategory: 'Category:Images', pointerTemplates: 'main' })), [
       'galleries.pointerTemplates must be an array of strings (got "main")',

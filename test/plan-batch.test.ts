@@ -93,3 +93,65 @@ describe('planBatch', () => {
     assert.equal(client.requests.length, 0);
   });
 });
+
+describe('planBatch replacements', () => {
+  const copies: World = {
+    pages: {
+      'File:Reno small.jpg': '',
+      'File:Reno.png': '',
+      'File:Rude small.jpg': '',
+      'File:Rude.png': '',
+      'File:Elena small.jpg': '',
+      'File:Odd small.jpg': '',
+      Reno: '[[File:Reno small.jpg|thumb]]',
+      Rude: '{{Rude box}}',
+      'Template:Rude box': '<span>[[File:Rude small.jpg]]</span>',
+      Turks: '[[File:Reno small.jpg]] [[File:Reno.png]]',
+      Gallery: '{{#tag:gallery|Odd small.jpg}}',
+    },
+    shownOn: {
+      'File:Reno small.jpg': ['Reno', 'Turks'],
+      'File:Reno.png': ['Turks'],
+      'File:Rude small.jpg': ['Rude', 'Template:Rude box'],
+      'File:Odd small.jpg': ['Gallery'],
+    },
+    transcludes: { Rude: ['Template:Rude box'] },
+  };
+  const planCopies = () =>
+    planBatch(fakeWorld(copies), profile, rules, {
+      files: [{ from: 'Reno.png', to: 'Reno from FFVII model.png', confidence: 0.9 }],
+      deletions: [
+        { title: 'Reno small.jpg', reason: 'low-res copy', replaceWith: 'Reno.png' },
+        { title: 'Rude small.jpg', reason: 'low-res copy', replaceWith: 'File:Rude.png' },
+        { title: 'Elena small.jpg', reason: 'low-res copy', replaceWith: 'Elena.png' },
+        { title: 'Odd small.jpg', reason: 'low-res copy', replaceWith: 'Reno small.jpg' },
+      ],
+    });
+
+  test('usages point at the replacement under its final name, and the edits serve the deletion', async () => {
+    const manifest = await planCopies();
+    const edits = new Map(manifest.edits.map((edit) => [edit.title, edit]));
+    assert.equal(edits.get('Reno')?.text, '[[File:Reno from FFVII model.png|thumb]]', 'renamed in the batch: its new name');
+    assert.deepEqual(edits.get('Reno')?.entries, ['d1']);
+    assert.equal(edits.get('Turks')?.text, '[[File:Reno from FFVII model.png]] [[File:Reno from FFVII model.png]]', 'both copies on one page end up the same file');
+    assert.deepEqual(edits.get('Turks')?.entries, ['d1', 'f1']);
+    assert.equal(edits.get('Template:Rude box')?.text, '<span>[[File:Rude.png]]</span>', 'not renamed: its current name');
+    assert.ok(!edits.has('Gallery'), 'a replacement with errors gets no edits');
+  });
+
+  test('a replacement is used by nothing once rewritten; a bad one is an error and still in use', async () => {
+    const deletions = (await planCopies()).entries.flatMap((entry) => (entry.kind === 'file-delete' ? [entry] : []));
+    assert.deepEqual(
+      deletions.map((entry) => [entry.id, entry.replacedBy, entry.usedBy, entry.errors.map((error) => error.code)]),
+      [
+        ['d1', 'File:Reno from FFVII model.png', [], []],
+        ['d2', 'File:Rude.png', [], []],
+        ['d3', 'File:Elena.png', [], ['replacement-missing']],
+        ['d4', 'File:Reno small.jpg', ['Gallery'], ['replacement-missing', 'in-use']],
+      ],
+    );
+    assert.match(deletions[2]!.errors[0]!.message, /does not exist/);
+    assert.match(deletions[3]!.errors[0]!.message, /being deleted too/);
+    assert.ok(deletions.every((entry) => !entry.approved), 'deletions never start approved');
+  });
+});

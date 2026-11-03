@@ -40,6 +40,8 @@ See [docs/design.md](docs/design.md) for the full design.
 npm install
 ```
 
+The bot's login goes in `profiles/<wiki>/credentials.json`, which git ignores. Create a bot password on the wiki's `Special:BotPasswords`, then copy `credentials.example.json` next to it and fill in the login name (`<account>@<bot password name>`) and password. The read-only phase doesn't use it yet.
+
 ## Development
 
 ```bash
@@ -50,7 +52,7 @@ npm run mcp -- finalfantasy   # the MCP server over stdio (read-only), for one p
 
 ## Using it from Claude Code
 
-`.mcp.json` registers the server (`wiki-agent`, for the `finalfantasy` profile) for Claude Code sessions started in this folder. Claude Code asks once before starting it. The server sends the LLM a workflow and the profile's `guide.md` as its instructions. Then ask for a plan, e.g. "plan renames for Category:Final Fantasy VII character images" or "plan deleting the galleries in Category:Character galleries from Final Fantasy VII". Manifests land in `manifests/`; open the `.md` one to review.
+`.mcp.json` registers the server (`wiki-agent`, for the `finalfantasy` profile) for Claude Code sessions started in this folder. Claude Code asks once before starting it. The server sends the LLM a workflow and the profile's `guide.md` as its instructions. Then ask for a plan, e.g. "plan renames for Category:Final Fantasy VII character images" or "plan deleting the galleries in Category:Character galleries from Final Fantasy VII". Manifests land in `manifests/`; open the `.md` one to review. In hosts that support MCP Apps, a review page also opens in the conversation: answer the questions, approve deletions and press **Re-plan** there.
 
 It's started with `node` directly, not `npm run`, because npm's banner on stdout would break the protocol.
 

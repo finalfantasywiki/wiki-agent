@@ -7,10 +7,18 @@
 //   category is created first, from the profile's text;
 // - images in sections that belong on the article (merchandise) are tagged
 //   and kept, with a question to move them there;
+// - images only galleries show, but other pages link to (a scan an infobox
+//   cites), are tagged and kept, with a question naming the page they
+//   belong on (the profile's fileHomes) if there is one;
+// - images with a page they belong on (a guide book scan) are tagged and
+//   kept even if nothing links to them, with a question to add them there;
 // - the gallery, its talk page and redirects to it are deleted, and links to
 //   them removed: the subject's |gallery=true, {{main|/Gallery}} (with a
 //   heading it leaves empty), [[…/Gallery]] links. A page whose link can't be
 //   removed blocks the deletion it links to.
+// An image asked about can be answered (answers.ts): "keep" tags it without
+// asking again, "delete" deletes it after all, and free text is asked again
+// with the answer, for the LLM.
 // Pages deleted in the same batch don't count as links or usages. The wiki's
 // settings (category names, parameters, templates) come from the profile's
 // `galleries`.
@@ -19,6 +27,7 @@
 //   await client.getSiteInfo();
 
 import { createPatch } from 'diff';
+import { CHOICES, type Answer } from '../plans/answers.ts';
 import { buildManifest, type CategoryTagInput, type FileDeleteInput, type Manifest, type PageCreateInput, type PageDeleteInput, type QuestionInput } from '../plans/manifest.ts';
 import type { PageEdit, PageLeftover, Usage } from '../plans/reference-edits.ts';
 import type { GallerySettings, Profile } from '../profile.ts';
@@ -37,11 +46,18 @@ export class GalleryCleanupError extends Error {
   }
 }
 
-export async function planGalleryCleanup(client: WikiClient, profile: Profile, galleries: readonly string[]): Promise<Manifest> {
+export interface GalleryCleanupOptions {
+  /** Saved answers to earlier plans' questions (answers.ts), by the title they're about. */
+  readonly answers?: ReadonlyMap<string, Answer>;
+}
+
+export async function planGalleryCleanup(client: WikiClient, profile: Profile, galleries: readonly string[], options: GalleryCleanupOptions = {}): Promise<Manifest> {
+  const answers = options.answers ?? new Map<string, Answer>();
   const settings = profile.galleries;
   if (settings === undefined) throw new GalleryCleanupError(`profile ${profile.name} has no galleries settings`);
   const categoryFor = (subject: string) => settings.imageCategory.replaceAll('{subject}', subject);
   const moveSections = settings.moveSections.length === 0 ? /(?!)/ : new RegExp(settings.moveSections.map(escapeRegExp).join('|'), 'i');
+  const homeOf = (file: string) => Object.entries(settings.fileHomes).find(([words]) => file.toLowerCase().includes(words.toLowerCase()))?.[1];
   const questions: QuestionInput[] = [];
   const pageCreations: PageCreateInput[] = [];
   const pageDeletions: Array<Omit<PageDeleteInput, 'usedBy'>> = [];
@@ -85,18 +101,38 @@ export async function planGalleryCleanup(client: WikiClient, profile: Profile, g
   }
 
   function planImage(image: ClassifiedImage, gallery: string, subject: string, category: string): void {
+    const preview = { pageUrl: image.pageUrl, thumbUrl: image.thumbUrl };
+    const tag = () => {
+      if (!image.inCategory) tags.push({ title: image.title, category, subject });
+    };
+    const deleteFile = (reason: string) => {
+      fileDeletions.push({ title: image.title, reason, linkedFrom: image.linkedFrom, galleries: image.galleries, ...preview });
+      for (const redirect of image.redirects) pageDeletions.push({ title: redirect.title, reason: `redirect to ${image.title}, which is deleted` });
+    };
+    /** An image kept for now: asked about, unless it was answered already. */
+    const ask = (question: string) => {
+      const answer = answers.get(image.title);
+      if (answer?.choice === 'delete') return deleteFile(`only shown on ${image.galleries.join(', ')}; you answered delete`);
+      if (answer?.choice !== 'keep') {
+        questions.push({ about: image.title, question, choices: CHOICES, ...(answer?.choice === 'other' ? { answer: answer.text } : {}), ...preview });
+      }
+      tag();
+    };
     switch (image.verdict) {
-      case 'delete':
-        fileDeletions.push({ title: image.title, reason: `only shown on ${image.galleries.join(', ')}`, linkedFrom: image.linkedFrom, galleries: image.galleries });
-        for (const redirect of image.redirects) pageDeletions.push({ title: redirect.title, reason: `redirect to ${image.title}, which is deleted` });
-        return;
+      case 'delete': {
+        const home = homeOf(image.title);
+        if (home === undefined) return deleteFile(`only shown on ${image.galleries.join(', ')}`);
+        return ask(`Only shown on ${image.galleries.join(', ')}, but it belongs on ${home}, so it's kept and tagged. Add it to ${home}.`);
+      }
       case 'move':
-        questions.push({ about: image.title, question: `Only shown on ${gallery} (${image.headings.map((heading) => heading.text).join(' › ')}). Add it to ${subject}, then plan again; it's kept and tagged meanwhile.` });
-        if (!image.inCategory) tags.push({ title: image.title, category, subject });
-        return;
+        return ask(`Only shown on ${gallery} (${image.headings.map((heading) => heading.text).join(' › ')}). Add it to ${subject}, then plan again; it's kept and tagged meanwhile.`);
+      case 'linked': {
+        const home = homeOf(image.title);
+        const linking = image.linkedFrom.map((ref) => ref.title).join(', ');
+        return ask(`Only shown on ${image.galleries.join(', ')}, but linked from ${linking}, so it's kept and tagged. ${home === undefined ? 'Show it on a page that stays, or delete it.' : `Add it to ${home}.`}`);
+      }
       case 'keep':
-        if (!image.inCategory) tags.push({ title: image.title, category, subject });
-        return;
+        return tag();
       case 'missing':
         // A red link on the gallery; it goes with the page.
         return;
@@ -115,7 +151,9 @@ export async function planGalleryCleanup(client: WikiClient, profile: Profile, g
     for (const ref of usages.transclusions) if (!deleted.has(ref.title)) links.push({ from: page.title, page: ref.title, kind: 'transcluded' });
   }
 
-  const { edits, leftovers } = await planEdits(client, settings, [...deleted], links, tags, titles.filter(isGalleryPage));
+  // Only links to deleted pages are removed. A file a staying page links to is kept, never unlinked.
+  const unlinked = [...new Set(pageDeletions.map((page) => page.title))];
+  const { edits, leftovers } = await planEdits(client, settings, unlinked, links, tags, titles.filter(isGalleryPage));
   const tagged = new Set(edits.filter((edit) => edit.rewrites.some((rewrite) => rewrite.kind === 'category')).map((edit) => edit.title));
   const fixed = new Set(edits.flatMap((edit) => edit.rewrites.map((rewrite) => `${edit.title}\n${rewrite.from}`)));
   const leftover = new Set(leftovers.map((left) => `${left.page}\n${left.from}`));
@@ -128,8 +166,11 @@ export async function planGalleryCleanup(client: WikiClient, profile: Profile, g
   return buildManifest({
     wiki: profile.name,
     api: profile.api,
+    request: { task: 'gallery-cleanup', galleries: titles },
     deletions: firstOfEach(fileDeletions, (file) => file.title).map((file) => ({
       title: file.title,
+      pageUrl: file.pageUrl,
+      thumbUrl: file.thumbUrl,
       reason: file.galleries.some((gallery) => !deleted.has(gallery))
         ? `${file.reason}; ${file.galleries.filter((gallery) => !deleted.has(gallery)).join(', ')} isn't in this batch and would show a red link until it's deleted too`
         : file.reason,
@@ -147,13 +188,13 @@ export async function planGalleryCleanup(client: WikiClient, profile: Profile, g
 }
 
 /**
- * One edit per page: links to deleted pages removed, then categories added.
+ * One edit per page: links to `unlinked` (the deleted pages) removed, then categories added.
  * The subject's own page also loses its gallery link parameters.
  */
 async function planEdits(
   client: WikiClient,
   settings: GallerySettings,
-  deleted: readonly string[],
+  unlinked: readonly string[],
   links: ReadonlyArray<{ readonly page: string }>,
   tags: readonly CategoryTagInput[],
   galleries: readonly string[],
@@ -171,7 +212,7 @@ async function planEdits(
     const rewrites: Rewrite[] = [];
     if (linking.has(page.title)) {
       const own = galleries.filter((gallery) => gallerySubject(gallery) === page.title);
-      const result = removeLinks(client, text, deleted, {
+      const result = removeLinks(client, text, unlinked, {
         page: page.title,
         parameters: own.flatMap((gallery) => settings.linkParameters.map((name) => ({ name, target: gallery }))),
         pointers: settings.pointerTemplates,

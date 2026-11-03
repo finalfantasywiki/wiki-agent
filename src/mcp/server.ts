@@ -7,9 +7,13 @@
 // Step 5b: the naming tools (vocabulary, validating names).
 // Step 5c: the planning tools (plan a batch into a manifest, show it, approve
 // entries). These write manifests to a local folder, never to the wiki.
-// Gallery cleanup: plan deleting a batch of /Gallery pages into a manifest.
+// Gallery cleanup: plan deleting a batch of /Gallery pages into a manifest,
+// answer its questions (saved per wiki, never on the wiki), and plan it again.
+// The review page (review-app.ts): the planning tools and show_manifest open
+// it in hosts that draw MCP Apps.
 
 import { writeFile } from 'node:fs/promises';
+import { registerAppTool } from '@modelcontextprotocol/ext-apps/server';
 import { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { validateFileName, type FileNameParts } from '../file-renames/file-name.ts';
@@ -17,10 +21,12 @@ import { loadNamingRules, type LoadedRules } from '../file-renames/load-vocabula
 import type { ReleaseVocab } from '../file-renames/vocabulary.ts';
 import { planGalleryCleanup } from '../gallery-cleanup/plan-gallery-cleanup.ts';
 import { planBatch } from '../plan-batch.ts';
-import { loadManifest, MANIFESTS_DIR, saveManifest, setApproval, type Manifest } from '../plans/manifest.ts';
+import { ANSWERS_DIR, CHOICES, loadAnswers, saveAnswers, type AnswerInput } from '../plans/answers.ts';
+import { carryApprovals, loadManifest, MANIFESTS_DIR, saveManifest, setApproval, type Manifest } from '../plans/manifest.ts';
 import { renderManifest } from '../plans/render-manifest.ts';
 import type { Profile } from '../profile.ts';
 import { userAgent, type WikiClient } from '../wiki/client.ts';
+import { OPENS_REVIEW_PAGE, registerReviewPage } from './review-app.ts';
 import { findUsages, getFileInfo, getPages, listCategoryMembers } from '../wiki/read.ts';
 
 export interface ServerContext {
@@ -32,6 +38,8 @@ export interface ServerContext {
   readonly rules?: () => Promise<LoadedRules>;
   /** Where manifests are saved. Defaults to manifests/ in the repo. */
   readonly manifestsDir?: string;
+  /** Where answers to questions are saved. Defaults to answers/ in the repo. */
+  readonly answersDir?: string;
   /** The profile's guide (profiles/<name>/guide.md), added to the server's instructions. */
   readonly guide?: string;
 }
@@ -52,11 +60,11 @@ You help maintain a MediaWiki wiki: renaming files and categories, fixing every 
 1. A batch is one game's galleries: list them with \`list_category_members\` (e.g. on "Character galleries from Final Fantasy VII").
 2. Plan with \`plan_gallery_cleanup\`. Images shown only on /Gallery pages are deleted; the rest are tagged with the subject's image category, which is created first if it's missing (show the user its text); the galleries, their talk pages and redirects are deleted, and links to them removed.
 3. Before the user approves a file deletion, show them the files: \`get_file_info\` with \`thumbnails: true\` on the deletions. Point out odd ones (a name like "File:File:…", a file that may be worth keeping).
-4. Questions in the plan (merchandise to move to the article, a gallery line that isn't a file) are for the user; don't answer them yourself.
+4. Questions in the plan (merchandise to move to the article, a scan that belongs on a guide book's page) are for the user; don't answer them yourself. Record each answer the user gives with \`answer_question\`: one of the question's choices, or their own words. Then plan again with \`replan\`, which applies the answers and keeps the user's approvals.
 
 ## Rules
 - **Don't guess.** If a file is missing, or you can't tell the subject, release, version or type with confidence, add a question to the plan instead of a rename. Give honest confidence values: below 0.8, an entry starts unapproved.
-- **Unused files are deleted, not renamed.** A file nothing uses goes in \`deletions\` with a reason.
+- **Unused files are deleted, not renamed.** A file nothing uses goes in \`deletions\` with a reason. So does a lower-quality copy of another file, with \`replaceWith\` naming the file to keep (by its current name).
 - Entries with errors (e.g. a usage that can't be rewritten) can't be approved; tell the user why, from the manifest.`;
 
 /** Most titles one call takes, so a call stays reviewable and quick. */
@@ -78,6 +86,24 @@ export function createServer(context: ServerContext): McpServer {
   const rules = once(context.rules ?? (() => loadNamingRules(client, profile)));
   const siteInfo = once(() => client.getSiteInfo());
   const manifestsDir = context.manifestsDir ?? MANIFESTS_DIR;
+  const answersDir = context.answersDir ?? ANSWERS_DIR;
+
+  /** Plans galleries with the saved answers (keeping `previous`'s approvals, when it's planned again), saves it, and says where. */
+  async function planGalleries(galleries: readonly string[], previous?: Manifest) {
+    await siteInfo();
+    const planned = await planGalleryCleanup(client, profile, galleries, { answers: await loadAnswers(profile.name, answersDir) });
+    const manifest = previous === undefined ? planned : carryApprovals(previous, planned);
+    const paths = await save(manifest, manifestsDir);
+    const deletions = manifest.entries.filter((entry) => entry.kind === 'file-delete').length;
+    const look = deletions === 0 ? '' : `\n\n${deletions} file(s) to delete: show them to the user with get_file_info (thumbnails: true) before any are approved.`;
+    const replaced = previous === undefined ? '' : ` (replacing ${previous.id})`;
+    return {
+      ...text(`Saved manifest ${manifest.id}${replaced}\n- JSON: ${paths.json}\n- Review (with diffs): ${paths.markdown}${look}\n\n${renderManifest(manifest, { edits: 'none' })}`),
+      structuredContent: { manifestId: manifest.id },
+    };
+  }
+
+  registerReviewPage(server, { imageHosts: profile.imageHosts ?? [], loadManifest: (id) => loadManifest(id, manifestsDir) });
 
   server.registerTool(
     'list_category_members',
@@ -218,7 +244,7 @@ export function createServer(context: ServerContext): McpServer {
         `Plans a batch of changes on ${wiki} and saves it as a manifest for the user to review. Nothing is changed on the wiki.`,
         'File renames: propose names without numbers; they are validated and numbered here.',
         'Category renames: give a model category (its text is copied with the release swapped), or text, or neither to keep the old page\'s text; "related" fills the header.',
-        'Deletions: files nothing uses. Questions: anything you can\'t decide (who is pictured, which version) — ask rather than guess.',
+        'Deletions: files nothing uses, or a copy to replace with a better one (replaceWith, e.g. the high-resolution version): its usages are pointed at that file, under its new name if this batch renames it. Questions: anything you can\'t decide (who is pictured, which version) — ask rather than guess.',
         'Returns the manifest summary and where its files are; usages that can\'t be rewritten block their entries.',
       ].join(' '),
       inputSchema: z.object({
@@ -228,7 +254,7 @@ export function createServer(context: ServerContext): McpServer {
         categories: z
           .array(z.object({ from: z.string().min(1), to: z.string().min(1), model: z.string().optional(), text: z.string().optional(), related: z.string().optional() }))
           .optional(),
-        deletions: z.array(z.object({ title: z.string().min(1), reason: z.string().min(1) })).optional(),
+        deletions: z.array(z.object({ title: z.string().min(1), reason: z.string().min(1), replaceWith: z.string().min(1).optional() })).optional(),
         questions: z.array(issue).optional(),
       }),
       annotations: LOCAL_WRITE,
@@ -241,7 +267,8 @@ export function createServer(context: ServerContext): McpServer {
     },
   );
 
-  server.registerTool(
+  registerAppTool(
+    server,
     'plan_gallery_cleanup',
     {
       title: 'Plan gallery cleanup',
@@ -253,18 +280,69 @@ export function createServer(context: ServerContext): McpServer {
       ].join(' '),
       inputSchema: z.object({ galleries: titles.describe('/Gallery pages, e.g. "Tifa Lockhart/Gallery"') }),
       annotations: LOCAL_WRITE,
+      _meta: OPENS_REVIEW_PAGE,
     },
-    async ({ galleries }) => {
-      await siteInfo();
-      const manifest = await planGalleryCleanup(client, profile, galleries);
-      const paths = await save(manifest, manifestsDir);
-      const deletions = manifest.entries.filter((entry) => entry.kind === 'file-delete').length;
-      const look = deletions === 0 ? '' : `\n\n${deletions} file(s) to delete: show them to the user with get_file_info (thumbnails: true) before any are approved.`;
-      return text(`Saved manifest ${manifest.id}\n- JSON: ${paths.json}\n- Review (with diffs): ${paths.markdown}${look}\n\n${renderManifest(manifest, { edits: 'none' })}`);
-    },
+    async ({ galleries }) => planGalleries(galleries),
   );
 
   server.registerTool(
+    'answer_question',
+    {
+      title: 'Answer questions',
+      description: [
+        "Saves the user's answers to a saved manifest's questions (by question ID, e.g. \"q3\"), for planning again with replan. Nothing is changed on the wiki.",
+        `Give one of the question's choices (${CHOICES.join(', ')}), or "other" with the user's own words in "text".`,
+        'Answers are kept per wiki, so later plans apply them too. Only answer what the user said.',
+      ].join(' '),
+      inputSchema: z.object({
+        id: z.uuid(),
+        answers: z
+          .array(z.object({ question: z.string().min(1), choice: z.enum([...CHOICES, 'other']), text: z.string().optional().describe('The user\'s words, for "other"') }))
+          .min(1),
+      }),
+      annotations: { ...LOCAL_WRITE, idempotentHint: true },
+    },
+    async ({ id, answers }) => {
+      const manifest = await loadManifest(id, manifestsDir);
+      const questions = new Map(manifest.entries.flatMap((entry) => (entry.kind === 'question' ? [[entry.id, entry] as const] : [])));
+      const problems: string[] = [];
+      const inputs: AnswerInput[] = [];
+      for (const answer of answers) {
+        const question = questions.get(answer.question);
+        if (question === undefined) problems.push(`${answer.question} isn't a question in ${id}`);
+        else if (answer.choice === 'other') {
+          if (answer.text === undefined || answer.text.trim() === '') problems.push(`${answer.question}: "other" needs the user's words in "text"`);
+          else inputs.push({ about: question.about, choice: 'other', text: answer.text.trim() });
+        } else if (!(question.choices ?? []).includes(answer.choice)) {
+          problems.push(`${answer.question} doesn't offer "${answer.choice}"; answer it with "other" and the user's words`);
+        } else inputs.push({ about: question.about, choice: answer.choice });
+      }
+      if (problems.length > 0) throw new Error(`Can't save the answers:\n${problems.map((problem) => `  - ${problem}`).join('\n')}`);
+      await saveAnswers(profile.name, inputs, { dir: answersDir });
+      return text(`Saved ${inputs.length} answer(s): ${inputs.map((input) => `${input.about} → ${input.choice === 'other' ? `"${input.text}"` : input.choice}`).join('; ')}. Plan again with replan to apply them.`);
+    },
+  );
+
+  registerAppTool(
+    server,
+    'replan',
+    {
+      title: 'Plan again',
+      description: `Plans a saved gallery-cleanup manifest again on ${wiki}, as a new manifest: the wiki as it is now, with every saved answer applied, and the approvals the user gave carried over. Nothing is changed on the wiki.`,
+      inputSchema: z.object({ id: z.uuid() }),
+      annotations: LOCAL_WRITE,
+      _meta: OPENS_REVIEW_PAGE,
+    },
+    async ({ id }) => {
+      const previous = await loadManifest(id, manifestsDir);
+      if (previous.wiki !== profile.name) throw new Error(`${id} was planned for ${previous.wiki}, not ${profile.name}`);
+      if (previous.request?.task !== 'gallery-cleanup') throw new Error(`${id} doesn't record what it was planned from; only gallery-cleanup manifests can be planned again`);
+      return planGalleries(previous.request.galleries, previous);
+    },
+  );
+
+  registerAppTool(
+    server,
     'show_manifest',
     {
       title: 'Show manifest',
@@ -274,8 +352,9 @@ export function createServer(context: ServerContext): McpServer {
         edits: z.enum(['none', 'list', 'diffs']).optional().describe('How to show page edits (default "list")'),
       }),
       annotations: { ...READ_ONLY, openWorldHint: false },
+      _meta: OPENS_REVIEW_PAGE,
     },
-    async ({ id, edits }) => text(renderManifest(await loadManifest(id, manifestsDir), { edits: edits ?? 'list' })),
+    async ({ id, edits }) => ({ ...text(renderManifest(await loadManifest(id, manifestsDir), { edits: edits ?? 'list' })), structuredContent: { manifestId: id } }),
   );
 
   server.registerTool(

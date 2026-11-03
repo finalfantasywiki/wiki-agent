@@ -10,6 +10,8 @@ export interface Profile {
   readonly api: string;
   /** Who to contact about the bot; goes in the User-Agent. */
   readonly userAgentContact: string;
+  /** Where the wiki's images are served from (origins), so the review page may show thumbnails. Optional. */
+  readonly imageHosts?: readonly string[];
   /** Required before any write: a policy URL, or a note on who approved the bot. */
   readonly botPolicy: { readonly url: string | null; readonly note: string };
   readonly rate: { readonly editIntervalSeconds: number; readonly maxlag: number };
@@ -35,6 +37,11 @@ export interface GallerySettings {
   readonly pointerTemplates: readonly string[];
   /** Words in a heading whose images belong on the article instead (e.g. "Merchandise"); matched case-insensitively. */
   readonly moveSections: readonly string[];
+  /**
+   * Where kept images belong, by words in their file name (case-insensitive):
+   * { "ultimania omega scan": "Final Fantasy VII Ultimania Omega" }.
+   */
+  readonly fileHomes: Readonly<Record<string, string>>;
 }
 
 export interface CategoryPages {
@@ -117,6 +124,7 @@ export function parseProfile(json: unknown, source: string): Profile {
     name: check.string(root?.name, 'name'),
     api: check.url(root?.api, 'api'),
     userAgentContact: check.string(root?.userAgentContact, 'userAgentContact'),
+    ...(root?.imageHosts === undefined ? {} : { imageHosts: check.stringArray(root.imageHosts, 'imageHosts').map((host, i) => check.url(host, `imageHosts[${i}]`)) }),
     botPolicy: {
       url: botPolicy?.url === null ? null : check.url(botPolicy?.url, 'botPolicy.url'),
       note: check.string(botPolicy?.note, 'botPolicy.note', { allowEmpty: true }),
@@ -167,6 +175,7 @@ export function parseProfile(json: unknown, source: string): Profile {
             linkParameters: check.stringArray(galleries?.linkParameters, 'galleries.linkParameters'),
             pointerTemplates: check.stringArray(galleries?.pointerTemplates, 'galleries.pointerTemplates'),
             moveSections: check.stringArray(galleries?.moveSections, 'galleries.moveSections'),
+            fileHomes: check.stringRecord(galleries?.fileHomes, 'galleries.fileHomes'),
           },
         }),
   };

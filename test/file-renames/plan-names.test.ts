@@ -21,7 +21,7 @@ function wiki(existing: readonly string[]) {
       !set.has(title)
         ? { title, missing: true }
         : params.get('prop')?.includes('imageinfo')
-          ? { title, imageinfo: [{ url: `https://img/${title}`, width: 1, height: 1, size: 1, mime: 'image/png', sha1: 'x', user: 'U', timestamp: 'T' }] }
+          ? { title, imageinfo: [{ url: `https://img/${title}`, thumburl: `https://img/thumb/${title}`, descriptionurl: `https://wiki/${title}`, width: 1, height: 1, size: 1, mime: 'image/png', sha1: 'x', user: 'U', timestamp: 'T' }] }
           : { title },
     );
     return { query: { pages } };
@@ -41,6 +41,8 @@ describe('planNames', () => {
     assert.equal(planned?.confidence, 0.9);
     assert.deepEqual(planned?.errors, []);
     assert.deepEqual(planned?.warnings, []);
+    assert.equal(planned?.pageUrl, 'https://wiki/File:Aeris-ffvii-battle.png');
+    assert.equal(planned?.thumbUrl, 'https://img/thumb/File:Aeris-ffvii-battle.png');
   });
 
   test('joining a numbered set on the wiki takes the next free number', async () => {

@@ -32,8 +32,10 @@ export interface FileInfo {
   readonly title: string;
   readonly exists: boolean;
   readonly url: string | undefined;
-  /** A scaled-down image, for the LLM to look at. */
+  /** A scaled-down image, for the LLM (or a reviewer) to look at. */
   readonly thumbUrl: string | undefined;
+  /** The file's description page on the wiki. */
+  readonly pageUrl: string | undefined;
   readonly width: number | undefined;
   readonly height: number | undefined;
   readonly size: number | undefined;
@@ -140,6 +142,7 @@ export async function getFileInfo(client: WikiClient, titles: readonly string[],
     imageinfo?: Array<{
       url: string;
       thumburl?: string;
+      descriptionurl?: string;
       width: number;
       height: number;
       size: number;
@@ -165,6 +168,7 @@ export async function getFileInfo(client: WikiClient, titles: readonly string[],
       exists: page !== undefined && page.missing !== true && info !== undefined,
       url: info?.url,
       thumbUrl: info?.thumburl,
+      pageUrl: info?.descriptionurl,
       width: info?.width,
       height: info?.height,
       size: info?.size,

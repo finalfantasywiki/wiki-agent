@@ -160,3 +160,141 @@ describe('renderManifest: pages to create and delete, and category tags', () => 
     assert.ok(markdown.includes('| t1 | ✅ | File:Kept.png | Category:Images of Tifa Lockhart |  |'));
   });
 });
+
+describe('renderManifest: file previews', () => {
+  const CAIT = 'File:Cait Sith (FFVII).png';
+  const markdown = renderManifest(
+    buildManifest(
+      {
+        wiki: 'finalfantasy',
+        api: 'https://finalfantasy.fandom.com/api.php',
+        files: [
+          {
+            from: 'File:Cait.png',
+            to: 'File:Cait Sith from FFVII render.png',
+            requested: 'File:Cait Sith from FFVII render.png',
+            confidence: 0.9,
+            errors: [],
+            warnings: [],
+            pageUrl: 'https://wiki.test/wiki/File:Cait.png',
+            thumbUrl: 'https://img.test/thumb/Cait.png',
+          },
+          { from: 'File:Plain.png', to: 'File:Barret Wallace from FFVII render.png', requested: 'File:Barret Wallace from FFVII render.png', confidence: 0.9, errors: [], warnings: [] },
+        ],
+        deletions: [
+          { title: CAIT, reason: 'only shown on Cait Sith/Gallery', usedBy: [], pageUrl: 'https://wiki.test/wiki/File:Cait_Sith_(FFVII).png', thumbUrl: 'https://img.test/thumb/Cait (FFVII).png' },
+          { title: 'File:No preview.png', reason: 'r', usedBy: [] },
+        ],
+        questions: [{ about: 'File:Figure.jpg', question: 'Add it to Hero.', pageUrl: 'https://wiki.test/wiki/File:Figure.jpg', thumbUrl: 'https://img.test/thumb/Figure.jpg' }],
+        references: { edits: [], usages: [], leftovers: [], blocked: [] },
+      },
+      { id: '3f1c2a64-8d0e-4c5b-9a7e-2b6d1f0c9e88', now: new Date('2026-11-02T12:00:00Z') },
+    ),
+  );
+
+  test('deletions show a thumbnail linking to the file page, and link the name; parentheses are escaped', () => {
+    assert.ok(markdown.includes('| ID | Approved | Image | File | Reason | Issues |'));
+    assert.ok(
+      markdown.includes(
+        '| d1 | ⬜ | <a href="https://wiki.test/wiki/File:Cait_Sith_%28FFVII%29.png"><img src="https://img.test/thumb/Cait%20%28FFVII%29.png" alt="" loading="lazy" referrerpolicy="no-referrer"></a> | [File:Cait Sith (FFVII).png](https://wiki.test/wiki/File:Cait_Sith_%28FFVII%29.png) | only shown on Cait Sith/Gallery |  |',
+      ),
+    );
+  });
+
+  test('file renames show a thumbnail that sends no referrer, and link the old name', () => {
+    assert.ok(markdown.includes('| ID | Approved | Image | From | To | Confidence | Issues |'));
+    assert.ok(
+      markdown.includes(
+        '| f1 | ⬜ | <a href="https://wiki.test/wiki/File:Cait.png"><img src="https://img.test/thumb/Cait.png" alt="" loading="lazy" referrerpolicy="no-referrer"></a> | [File:Cait.png](https://wiki.test/wiki/File:Cait.png) | File:Cait Sith from FFVII render.png | 0.90 | unused |',
+      ),
+    );
+    assert.ok(markdown.includes('| f2 | ⬜ |  | File:Plain.png | File:Barret Wallace from FFVII render.png | 0.90 | unused |'));
+  });
+
+  test('quotes and ampersands in URLs are escaped in the image tag', () => {
+    const tricky = renderManifest(
+      buildManifest(
+        {
+          wiki: 'finalfantasy',
+          api: 'https://finalfantasy.fandom.com/api.php',
+          deletions: [{ title: 'File:Q.png', reason: 'r', usedBy: [], thumbUrl: 'https://img.test/a.png?x=1&y="2"' }],
+          references: { edits: [], usages: [], leftovers: [], blocked: [] },
+        },
+        { id: '3f1c2a64-8d0e-4c5b-9a7e-2b6d1f0c9e88', now: new Date('2026-11-02T12:00:00Z') },
+      ),
+    );
+    assert.ok(tricky.includes('<img src="https://img.test/a.png?x=1&amp;y=&quot;2&quot;" alt=""'));
+  });
+
+  test('a file without URLs is plain text', () => {
+    assert.ok(markdown.includes('| d2 | ⬜ |  | File:No preview.png | r |  |'));
+  });
+
+  test('questions about a file show it too', () => {
+    assert.ok(markdown.includes('- **q1** · <a href="https://wiki.test/wiki/File:Figure.jpg"><img src="https://img.test/thumb/Figure.jpg" alt="" loading="lazy" referrerpolicy="no-referrer"></a> [File:Figure.jpg](https://wiki.test/wiki/File:Figure.jpg): Add it to Hero.'));
+  });
+
+  test('manifests without previews render as before', () => {
+    const plain = renderManifest(buildManifest({ ...input }, { id: '3f1c2a64-8d0e-4c5b-9a7e-2b6d1f0c9e88', now: new Date('2026-11-02T12:00:00Z') }));
+    assert.ok(plain.includes('| ID | Approved | File | Reason | Issues |'));
+  });
+});
+
+describe('renderManifest: answering questions', () => {
+  const markdown = renderManifest(
+    buildManifest(
+      {
+        wiki: 'finalfantasy',
+        api: 'https://finalfantasy.fandom.com/api.php',
+        questions: [
+          { about: 'File:Figure.jpg', question: 'Add it to Hero.', choices: ['keep', 'delete'] },
+          { about: 'File:Scan.png', question: 'Add it to Guide book.', choices: ['keep', 'delete'], answer: 'Ask the uploader first.' },
+          { about: 'Hero/Gallery', question: 'Which file is Bad<name>.png?' },
+        ],
+        references: { edits: [], usages: [], leftovers: [], blocked: [] },
+      },
+      { id: '3f1c2a64-8d0e-4c5b-9a7e-2b6d1f0c9e88', now: new Date('2026-11-02T12:00:00Z') },
+    ),
+  );
+
+  test('a question with choices lists them, and free text', () => {
+    assert.ok(markdown.includes('- **q1** · File:Figure.jpg: Add it to Hero.\n  - Answer: keep it and tag it · delete it · or in your own words'));
+  });
+
+  test('a free-text answer is shown instead', () => {
+    assert.ok(markdown.includes('- **q2** · File:Scan.png: Add it to Guide book.\n  - Your answer: Ask the uploader first.'));
+  });
+
+  test('a question without choices is just the question', () => {
+    assert.ok(markdown.includes('- **q3** · Hero/Gallery: Which file is Bad<name>.png?\n'));
+  });
+});
+
+describe('renderManifest: replacements', () => {
+  const markdown = renderManifest(
+    buildManifest(
+      {
+        wiki: 'finalfantasy',
+        api: 'https://finalfantasy.fandom.com/api.php',
+        deletions: [
+          { title: 'File:Reno small.jpg', reason: 'low-res copy', usedBy: [], replacedBy: 'File:Reno from FFVII render.png' },
+          { title: 'File:Rude small.jpg', reason: 'low-res copy', usedBy: ['Broken'], replacedBy: 'File:Rude.png' },
+          { title: 'File:Unused.png', reason: 'not used', usedBy: [] },
+        ],
+        references: { edits: [], usages: [], leftovers: [], blocked: [] },
+      },
+      { id: '3f1c2a64-8d0e-4c5b-9a7e-2b6d1f0c9e88', now: new Date('2026-11-02T12:00:00Z') },
+    ),
+  );
+
+  test('a Replaced by column, empty for plain deletions', () => {
+    assert.ok(markdown.includes('| ID | Approved | File | Replaced by | Reason | Issues |'));
+    assert.ok(markdown.includes('| d1 | ⬜ | File:Reno small.jpg | File:Reno from FFVII render.png | low-res copy |  |'));
+    assert.ok(markdown.includes('| d3 | ⬜ | File:Unused.png |  | not used |  |'));
+  });
+
+  test('what still uses a deletion', () => {
+    assert.ok(markdown.includes('| d2 | ⛔ | File:Rude small.jpg | File:Rude.png | low-res copy | **in-use** |'));
+    assert.ok(markdown.includes('- **d2** is still used on: Broken'));
+  });
+});

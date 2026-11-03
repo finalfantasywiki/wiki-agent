@@ -14,12 +14,15 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { z } from 'zod';
+import { CHOICES, type Choice } from './answers.ts';
 import type { ReferencePlan } from './reference-edits.ts';
 
 // --- Schema -----------------------------------------------------------------------
 
 const Issue = z.object({ code: z.string(), message: z.string() });
 const Issues = z.array(Issue);
+/** Where to see a file while reviewing: its page on the wiki, and a thumbnail. Optional; older manifests have neither. */
+const Preview = { pageUrl: z.string().optional(), thumbUrl: z.string().optional() };
 
 const FileRenameEntry = z.object({
   kind: z.literal('file-rename'),
@@ -30,6 +33,8 @@ const FileRenameEntry = z.object({
   requested: z.string(),
   reason: z.string().optional(),
   confidence: z.number().min(0).max(1).optional(),
+  /** Of the file under its current name. */
+  ...Preview,
   approved: z.boolean(),
   errors: Issues,
   warnings: Issues,
@@ -42,6 +47,9 @@ const FileDeleteEntry = z.object({
   reason: z.string(),
   /** Pages that still use the file; any makes deleting it an error. */
   usedBy: z.array(z.string()),
+  /** The file its usages are pointed at before it's deleted (under that file's new name, if it's renamed too). */
+  replacedBy: z.string().optional(),
+  ...Preview,
   approved: z.boolean(),
   errors: Issues,
   warnings: Issues,
@@ -105,6 +113,12 @@ const QuestionEntry = z.object({
   /** The page it's about. */
   about: z.string(),
   question: z.string(),
+  /** The fixed answers it offers (answers.ts); free text is always possible too. */
+  choices: z.array(z.enum(CHOICES)).optional(),
+  /** A free-text answer already given, for the LLM to act on: no planner applies one. */
+  answer: z.string().optional(),
+  /** When it's about a file. */
+  ...Preview,
 });
 
 const Entry = z.discriminatedUnion('kind', [FileRenameEntry, FileDeleteEntry, CategoryRenameEntry, PageCreateEntry, PageDeleteEntry, CategoryTagEntry, QuestionEntry]);
@@ -137,6 +151,8 @@ export const ManifestSchema = z.object({
   wiki: z.string(),
   api: z.url(),
   created: z.iso.datetime(),
+  /** What it was planned from, so it can be planned again (with new answers). Only some tasks record it. */
+  request: z.discriminatedUnion('task', [z.object({ task: z.literal('gallery-cleanup'), galleries: z.array(z.string()) })]).optional(),
   entries: z.array(Entry),
   edits: z.array(PageEdit),
   usages: z.array(Usage),
@@ -145,11 +161,12 @@ export const ManifestSchema = z.object({
 
 export type Manifest = z.infer<typeof ManifestSchema>;
 export type ManifestEntry = z.infer<typeof Entry>;
-type ManifestIssue = z.infer<typeof Issue>;
+export type ManifestRequest = NonNullable<Manifest['request']>;
+export type ManifestIssue = z.infer<typeof Issue>;
 
 // --- Building -----------------------------------------------------------------------
 
-export interface FileRenameInput {
+export interface FileRenameInput extends PreviewInput {
   readonly from: string;
   readonly to: string;
   readonly requested: string;
@@ -159,10 +176,20 @@ export interface FileRenameInput {
   readonly warnings: readonly ManifestIssue[];
 }
 
-export interface FileDeleteInput {
+/** Where to see a file while reviewing. */
+export interface PreviewInput {
+  readonly pageUrl?: string | undefined;
+  readonly thumbUrl?: string | undefined;
+}
+
+export interface FileDeleteInput extends PreviewInput {
   readonly title: string;
   readonly reason: string;
+  /** Pages that will still use it: all of them, or for a replacement, the ones whose usages can't be rewritten. */
   readonly usedBy: readonly string[];
+  /** For a replacement: the file its usages are rewritten to point at; `references` must have those edits. */
+  readonly replacedBy?: string | undefined;
+  readonly errors?: readonly ManifestIssue[];
 }
 
 export interface CategoryRenameInput {
@@ -193,9 +220,11 @@ export interface CategoryTagInput {
   readonly category: string;
 }
 
-export interface QuestionInput {
+export interface QuestionInput extends PreviewInput {
   readonly about: string;
   readonly question: string;
+  readonly choices?: readonly Choice[];
+  readonly answer?: string;
 }
 
 export interface ManifestInput {
@@ -216,6 +245,8 @@ export interface ManifestInput {
    * a renamed title, a page to delete (removing links to it), or a tagged page.
    */
   readonly references: ReferencePlan;
+  /** What it's planned from, for planning again. */
+  readonly request?: ManifestRequest;
 }
 
 /** Entries proposed with less confidence than this start unapproved. */
@@ -239,7 +270,15 @@ export function buildManifest(input: ManifestInput, options: { id?: string; now?
     blocked.has(from) ? [{ code: 'blocked', message: `${from} has usages that can't be rewritten; see the unresolved usages and leftovers` }] : [];
 
   for (const question of input.questions ?? []) {
-    questions.push({ kind: 'question', id: next('q'), about: question.about, question: question.question });
+    questions.push({
+      kind: 'question',
+      id: next('q'),
+      about: question.about,
+      question: question.question,
+      ...(question.choices === undefined ? {} : { choices: [...question.choices] }),
+      ...(question.answer === undefined ? {} : { answer: question.answer }),
+      ...preview(question),
+    });
   }
   for (const file of input.files ?? []) {
     // A missing source isn't a rename at all: ask.
@@ -262,15 +301,32 @@ export function buildManifest(input: ManifestInput, options: { id?: string; now?
       requested: file.requested,
       ...(file.reason === undefined ? {} : { reason: file.reason }),
       ...(file.confidence === undefined ? {} : { confidence: file.confidence }),
+      ...preview(file),
       approved: startsApproved(errors, warnings, file.confidence),
       errors,
       warnings,
     });
   }
   for (const deletion of input.deletions ?? []) {
-    const errors = deletion.usedBy.length === 0 ? [] : [{ code: 'in-use', message: `${deletion.title} is used on ${deletion.usedBy.length} page(s)` }];
+    const errors = [
+      ...(deletion.errors ?? []),
+      ...(deletion.usedBy.length === 0 ? [] : [{ code: 'in-use', message: `${deletion.title} is used on ${deletion.usedBy.length} page(s)` }]),
+      // A replacement's usages are rewritten like a rename's, so they can block it the same way.
+      ...(deletion.replacedBy === undefined ? [] : blockedIssue(deletion.title)),
+    ];
     // Deleting is never approved by default.
-    entries.push({ kind: 'file-delete', id: next('d'), title: deletion.title, reason: deletion.reason, usedBy: [...deletion.usedBy], approved: false, errors, warnings: [] });
+    entries.push({
+      kind: 'file-delete',
+      id: next('d'),
+      title: deletion.title,
+      reason: deletion.reason,
+      usedBy: [...deletion.usedBy],
+      ...(deletion.replacedBy === undefined ? {} : { replacedBy: deletion.replacedBy }),
+      ...preview(deletion),
+      approved: false,
+      errors,
+      warnings: [],
+    });
   }
   for (const category of input.categories ?? []) {
     const errors = [...category.errors, ...blockedIssue(category.from)];
@@ -312,6 +368,7 @@ export function buildManifest(input: ManifestInput, options: { id?: string; now?
   for (const entry of entries) {
     if (entry.kind === 'file-rename' || entry.kind === 'category-rename') add(entry.from, entry.id);
     if (entry.kind === 'page-delete' || entry.kind === 'category-tag') add(entry.title, entry.id);
+    if (entry.kind === 'file-delete' && entry.replacedBy !== undefined) add(entry.title, entry.id);
   }
   // An old category page is replaced by its new page (whose text is already
   // rewritten) and then removed, so editing it would be wasted.
@@ -332,11 +389,17 @@ export function buildManifest(input: ManifestInput, options: { id?: string; now?
     wiki: input.wiki,
     api: input.api,
     created: (options.now ?? new Date()).toISOString(),
+    ...(input.request === undefined ? {} : { request: input.request }),
     entries: [...questions, ...entries],
     edits,
     usages: input.references.usages.map((usage) => ({ ...usage })),
     leftovers: input.references.leftovers.map((leftover) => ({ page: leftover.page, from: leftover.from, line: leftover.line })),
   });
+}
+
+/** The preview URLs that are set, so a manifest without them has no empty fields. */
+function preview(input: PreviewInput): { pageUrl?: string; thumbUrl?: string } {
+  return { ...(input.pageUrl === undefined ? {} : { pageUrl: input.pageUrl }), ...(input.thumbUrl === undefined ? {} : { thumbUrl: input.thumbUrl }) };
 }
 
 function startsApproved(errors: readonly ManifestIssue[], warnings: readonly ManifestIssue[], confidence: number | undefined): boolean {
@@ -371,6 +434,29 @@ export function setApproval(manifest: Manifest, ids: readonly string[], approved
     ...manifest,
     entries: manifest.entries.map((entry) => (entry.kind !== 'question' && chosen.has(entry.id) ? { ...entry, approved } : entry)),
   };
+}
+
+/**
+ * `next` with the approvals the user gave in `previous`, a plan it replaces:
+ * an entry for the same change (the same kind and title) gets the same
+ * approval, unless it now has errors. Other entries keep their defaults.
+ */
+export function carryApprovals(previous: Manifest, next: Manifest): Manifest {
+  const approvals = new Map(previous.entries.flatMap((entry) => (entry.kind === 'question' ? [] : [[changeKey(entry), entry.approved] as const])));
+  return {
+    ...next,
+    entries: next.entries.map((entry) => {
+      if (entry.kind === 'question' || entry.errors.length > 0) return entry;
+      const approved = approvals.get(changeKey(entry));
+      return approved === undefined ? entry : { ...entry, approved };
+    }),
+  };
+}
+
+/** What an entry changes, the same across plans: its kind and the title it changes. */
+function changeKey(entry: Exclude<ManifestEntry, { kind: 'question' }>): string {
+  const title = entry.kind === 'file-rename' || entry.kind === 'category-rename' ? entry.from : entry.kind === 'category-tag' ? `${entry.title}\n${entry.category}` : entry.title;
+  return `${entry.kind}\n${title}`;
 }
 
 // --- Saving and loading ------------------------------------------------------------
