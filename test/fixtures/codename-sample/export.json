@@ -1,0 +1,78 @@
+{
+  "rel": [
+    {
+      "files": { "shorthand": "Hihō no Dragon" },
+      "id": "FFIIHnD",
+      "media": "text",
+      "sub": "FFII",
+      "title": "Final Fantasy II Hihō no Dragon"
+    },
+    {
+      "id": "FFVI",
+      "media": "game",
+      "series": "main",
+      "title": "Final Fantasy VI",
+      "versions": {
+        "2014": { "name": "mobile", "year": ["2014", "2015"] },
+        "advance": { "files": { "shorthand": "GBA" }, "name": "Advance", "title": "Final Fantasy VI Advance" },
+        "pixel remaster": { "name": "Pixel Remaster" },
+        "playstation": { "files": { "shorthand": "PS" }, "name": "PlayStation" },
+        "snes": { "name": "SNES" }
+      },
+      "year": "1994"
+    },
+    {
+      "files": { "versionneutral": true },
+      "id": "FFVII",
+      "media": "game",
+      "series": "VIIseries",
+      "title": "Final Fantasy VII",
+      "versions": {
+        "japanese international": { "name": "International" },
+        "pc 1998": { "name": "1998 PC release" }
+      }
+    },
+    {
+      "files": { "shorthand": "FFVII Remake", "versionneutral": true },
+      "id": "FFVIIR",
+      "media": "game",
+      "title": "Final Fantasy VII Remake",
+      "versions": { "intergrade": { "name": "Intergrade" } }
+    },
+    {
+      "files": { "shorthand": "Crisis Core" },
+      "id": "VIICC",
+      "media": "game",
+      "sub": "FFVII",
+      "title": "Crisis Core -Final Fantasy VII-"
+    },
+    {
+      "files": { "shorthand": "Trace of Two Pasts", "versionneutral": true },
+      "id": "VIIRToTP",
+      "media": "text",
+      "sub": "FFVII, VIIrp",
+      "title": "Final Fantasy VII Remake Trace of Two Pasts"
+    },
+    {
+      "id": "FFX",
+      "media": "game",
+      "terms": [],
+      "title": "Final Fantasy X",
+      "versions": {
+        "hd remaster": { "files": { "shorthand": "HD" }, "name": "HD Remaster" },
+        "international": { "name": "International" }
+      }
+    },
+    {
+      "files": { "shorthand": "FFXIV 1.0" },
+      "id": "XIV1",
+      "media": "game",
+      "sub": "false",
+      "title": "Final Fantasy XIV"
+    }
+  ],
+  "ser": [
+    { "id": "main", "title": "Main series" },
+    { "id": "VIIseries", "title": "Final Fantasy VII series" }
+  ]
+}

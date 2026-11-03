@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "wiki-agent": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["src/mcp/main.ts", "finalfantasy"]
+    }
+  }
+}

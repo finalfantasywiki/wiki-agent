@@ -1,0 +1,43 @@
+{
+  "name": "finalfantasy",
+  "api": "https://finalfantasy.fandom.com/api.php",
+  "userAgentContact": "User:Technobliterator on finalfantasy.fandom.com",
+  "botPolicy": {
+    "url": null,
+    "note": "No local bot policy; bot approved by bureaucrat User:Technobliterator"
+  },
+  "rate": {
+    "editIntervalSeconds": 5,
+    "maxlag": 5
+  },
+  "redirects": "suppress",
+  "emptiedCategories": {
+    "action": "delete"
+  },
+  "releases": {
+    "adapter": "codename",
+    "source": "export-module",
+    "exportModule": "Codename/export",
+    "dataModule": "Module:Codename/data",
+    "crossCheck": true
+  },
+  "vocabulary": {
+    "releaseTokens": {},
+    "versionTokens": {},
+    "versionNeutral": []
+  },
+  "fileNaming": {
+    "types": ["render", "model", "sprite", "gameplay", "cutscene", "dialogue", "concept art", "menu portrait", "still"]
+  },
+  "categoryPages": {
+    "headerTemplate": "category",
+    "headerParams": { "contains": "all image", "namespace": "file" }
+  },
+  "galleries": {
+    "imageCategory": "Category:Images of {subject}",
+    "categoryText": "{{category |contains=all |namespace=file |related=[[{subject}]] }}\n[[Category:Images by character]]",
+    "linkParameters": ["gallery"],
+    "pointerTemplates": ["main", "see also", "see"],
+    "moveSections": ["merchandise"]
+  }
+}
