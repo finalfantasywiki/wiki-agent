@@ -246,7 +246,7 @@ describe('questions with choices and answers', () => {
       wiki: 'finalfantasy',
       api: 'https://finalfantasy.fandom.com/api.php',
       questions: [
-        { about: 'File:Figure.jpg', question: 'Add it to Hero.', choices: ['keep', 'delete'] },
+        { about: 'File:Figure.jpg', question: 'Add it to Hero.', choices: ['keep', 'nominate'] },
         { about: 'File:Scan.png', question: 'Add it to Guide book.', answer: 'Ask the uploader first.' },
         { about: 'Hero/Gallery', question: 'Which file?' },
       ],
@@ -257,10 +257,20 @@ describe('questions with choices and answers', () => {
 
   test('keep them, and add no empty fields', () => {
     assert.deepEqual(manifest.entries, [
-      { kind: 'question', id: 'q1', about: 'File:Figure.jpg', question: 'Add it to Hero.', choices: ['keep', 'delete'] },
+      { kind: 'question', id: 'q1', about: 'File:Figure.jpg', question: 'Add it to Hero.', choices: ['keep', 'nominate'] },
       { kind: 'question', id: 'q2', about: 'File:Scan.png', question: 'Add it to Guide book.', answer: 'Ask the uploader first.' },
       { kind: 'question', id: 'q3', about: 'Hero/Gallery', question: 'Which file?' },
     ]);
+  });
+
+  test('an older manifest offering "delete" loads as offering "nominate"', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'manifest-'));
+    const saved = await saveManifest(manifest, dir);
+    const json = JSON.parse(await readFile(saved, 'utf8'));
+    json.entries[0].choices = ['keep', 'delete'];
+    await writeFile(saved, JSON.stringify(json));
+    const question = (await loadManifest(ID, dir)).entries[0];
+    assert.deepEqual(question?.kind === 'question' ? question.choices : undefined, ['keep', 'nominate']);
   });
 
   test('survive a save and load', async () => {
@@ -349,6 +359,70 @@ describe('pages to create and delete, and category tags', () => {
     const dir = await mkdtemp(join(tmpdir(), 'manifest-'));
     await saveManifest(manifest, dir);
     assert.deepEqual(await loadManifest(ID, dir), manifest);
+  });
+});
+
+describe('files to nominate for deletion', () => {
+  const FILE = 'File:Only on the gallery.png';
+  const manifest = buildManifest(
+    {
+      wiki: 'finalfantasy',
+      api: 'https://finalfantasy.fandom.com/api.php',
+      nominations: [{ title: FILE, reason: 'only shown on Tifa Lockhart/Gallery', thumbUrl: 'https://img.test/Only.png' }],
+      categoryTags: [{ title: FILE, category: 'Category:Images of Tifa Lockhart' }],
+      references: {
+        edits: [
+          {
+            title: FILE,
+            revid: 3,
+            timestamp: 'T',
+            text: '',
+            diff: '',
+            rewrites: [
+              { kind: 'nominate', from: FILE, before: '', after: '{{delete|reason=only shown on Tifa Lockhart/Gallery}}' },
+              { kind: 'category', from: FILE, before: '', after: '[[Category:Images of Tifa Lockhart]]' },
+            ],
+          },
+        ],
+        usages: [],
+        leftovers: [],
+        blocked: [],
+      },
+    },
+    { id: ID, now: NOW },
+  );
+
+  test('get x IDs, keep their preview, and never start approved', () => {
+    const [x1, t1] = manifest.entries;
+    assert.ok(x1?.kind === 'file-nominate');
+    assert.deepEqual([x1.id, x1.title, x1.reason, x1.thumbUrl, x1.approved], ['x1', FILE, 'only shown on Tifa Lockhart/Gallery', 'https://img.test/Only.png', false]);
+    assert.equal(t1?.id, 't1');
+  });
+
+  test("the file page's one edit is for both the nomination and the tag", () => {
+    assert.deepEqual(manifest.edits[0]?.entries, ['x1', 't1']);
+  });
+
+  test('an edit that only tags the file is not for the nomination', () => {
+    const tagOnly = buildManifest(
+      {
+        wiki: 'finalfantasy',
+        api: 'https://finalfantasy.fandom.com/api.php',
+        nominations: [{ title: FILE, reason: 'r' }],
+        categoryTags: [{ title: FILE, category: 'Category:Images of Tifa Lockhart' }],
+        references: { edits: [{ title: FILE, revid: 3, timestamp: 'T', text: '', diff: '', rewrites: [{ kind: 'category', from: FILE, before: '', after: '' }] }], usages: [], leftovers: [], blocked: [] },
+      },
+      { id: ID, now: NOW },
+    );
+    assert.deepEqual(tagOnly.edits[0]?.entries, ['t1']);
+  });
+
+  test('survive a save and load, and keep their approval when planned again', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'manifest-'));
+    await saveManifest(manifest, dir);
+    assert.deepEqual(await loadManifest(ID, dir), manifest);
+    const carried = carryApprovals(setApproval(manifest, ['x1'], true), manifest);
+    assert.equal(carried.entries[0]?.kind === 'file-nominate' && carried.entries[0].approved, true);
   });
 });
 

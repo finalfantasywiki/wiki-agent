@@ -76,11 +76,11 @@ describe('classifyGalleryImages', async () => {
 
   test('verdicts', () => {
     assert.deepEqual(Object.fromEntries(images.map((image) => [image.title.slice(5), image.verdict])), {
-      'Only here.png': 'delete',
-      'Shared gallery.png': 'delete',
+      'Only here.png': 'nominate',
+      'Shared gallery.png': 'nominate',
       'On article.png': 'keep',
       'Linked.png': 'linked',
-      'Gallery link.png': 'delete',
+      'Gallery link.png': 'nominate',
       'Missing.png': 'missing',
       'Figure.jpg': 'move',
       'Figure on article.jpg': 'keep',
@@ -107,7 +107,7 @@ describe('classifyGalleryImages', async () => {
     const other = wiki();
     const moved = await classifyGalleryImages(other, parseGalleryPage(other, TEXT), { category: CATEGORY, moveSections: /^Example Game$/ });
     assert.equal(moved.find((image) => image.title === 'File:Only here.png')?.verdict, 'move');
-    assert.equal(moved.find((image) => image.title === 'File:Figure.jpg')?.verdict, 'delete');
+    assert.equal(moved.find((image) => image.title === 'File:Figure.jpg')?.verdict, 'nominate');
   });
 
   test('two requests per 50 files', () => {

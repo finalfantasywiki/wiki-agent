@@ -9,7 +9,7 @@ import type { Choice } from './answers.ts';
 import type { Manifest, ManifestEntry } from './manifest.ts';
 
 /** How each fixed answer reads to the user. */
-export const CHOICE_LABELS: Record<Choice, string> = { keep: 'keep it and tag it', delete: 'delete it' };
+export const CHOICE_LABELS: Record<Choice, string> = { keep: 'keep it and tag it', nominate: 'nominate it for deletion' };
 
 type Entry<K extends ManifestEntry['kind']> = Extract<ManifestEntry, { kind: K }>;
 type Issue = { readonly code: string; readonly message: string };
@@ -28,6 +28,7 @@ export function renderManifest(manifest: Manifest, options: RenderOptions = {}):
   const categories = of('category-rename');
   const files = of('file-rename');
   const deletions = of('file-delete');
+  const nominations = of('file-nominate');
   const pageCreations = of('page-create');
   const pageDeletions = of('page-delete');
   const tags = of('category-tag');
@@ -112,6 +113,15 @@ export function renderManifest(manifest: Manifest, options: RenderOptions = {}):
     if (stillUsed.length > 0) out.push('');
   }
 
+  if (nominations.length > 0) {
+    out.push('## Files to nominate for deletion', '', "Each file's page gets the deletion template, for editors to decide on; nothing here deletes a file.", '');
+    const images = nominations.some((file) => file.thumbUrl !== undefined);
+    const headings = ['ID', 'Approved', ...(images ? ['Image'] : []), 'File', 'Reason'];
+    out.push(row(headings), row(headings.map(() => '---')));
+    for (const file of nominations) out.push(row([file.id, mark(file), ...(images ? [thumbnail(file)] : []), titleLink(file.title, file), file.reason]));
+    out.push('');
+  }
+
   if (pageCreations.length > 0) {
     out.push('## Pages to create', '');
     for (const page of pageCreations) {
@@ -178,12 +188,13 @@ function summary(manifest: Manifest): string[] {
     'category-rename': 'Category renames',
     'file-rename': 'File renames',
     'file-delete': 'Deletions',
+    'file-nominate': 'Nominated for deletion',
     'page-create': 'Pages to create',
     'page-delete': 'Pages to delete',
     'category-tag': 'Category tags',
   };
   const lines = ['| | Entries | Approved | With errors |', '|---|---|---|---|'];
-  for (const kind of ['question', 'category-rename', 'file-rename', 'file-delete', 'page-create', 'page-delete', 'category-tag'] as const) {
+  for (const kind of ['question', 'category-rename', 'file-rename', 'file-delete', 'file-nominate', 'page-create', 'page-delete', 'category-tag'] as const) {
     const count = counts.get(kind);
     if (count === undefined) continue;
     lines.push(kind === 'question' ? row([label[kind], String(count.total), '', '']) : row([label[kind], String(count.total), String(count.approved), String(count.withErrors)]));

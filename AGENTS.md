@@ -57,6 +57,7 @@ Notes on `mwn`: its `read()` / `massQuery()` batch titles but don't follow conti
 ## Wiki safety
 
 - **Phase 0 never writes to any wiki.** No login, and no API call that edits, moves, uploads, or deletes.
+- A profile's `rules` (edit summary naming the operator, public review of profile changes, where pages may be created, forbidden templates) are the community's conditions for running the bot. Don't weaken them, and don't plan around them.
 - Every request sends a descriptive User-Agent with a contact. Fandom returns 403 to default ones.
 - Lua runs **only on the wiki** (the export module or the Scribunto console). The tool parses Lua with `luaparse` and never executes it.
 - Tests run offline against `test/fixtures/`. Don't call live wikis from tests.
@@ -73,6 +74,7 @@ profiles/<wiki>/      per-wiki configuration: profile.json, and guide.md (the wi
 .mcp.json             registers the MCP server for Claude Code (node directly: npm's banner would break stdio)
 src/                  library code
   profile.ts          wiki profiles (shared)
+  profile-review.ts   the public review of a profile: the text to post on the wiki, and the check that it's current
   plan-batch.ts       plans one batch across tasks (file and category renames) into a manifest
   wiki/               MediaWiki API client (shared)
   lua/                Lua (Scribunto) parsing (shared)

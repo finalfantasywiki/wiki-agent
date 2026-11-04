@@ -13,6 +13,7 @@ const profile = {
   galleries: {
     imageCategory: 'Category:Images of {subject}',
     categoryText: '{{category |related=[[{subject}]] }}',
+    nominateText: '{{delete|reason={reason}}}',
     linkParameters: ['gallery'],
     pointerTemplates: ['main'],
     moveSections: ['merchandise'],
@@ -24,12 +25,15 @@ const profile = {
 const PAGES: Record<string, string> = {
   'Hero/Gallery': '==Game==\n<gallery>\nOnly here.png\nShared.png\nKept.png\nTagged.png\nMissing.png\nBad<name>.png\nHero guide scan.png\n</gallery>\n==Merchandise==\n<gallery>\nFigure.jpg\n</gallery>',
   'Talk:Hero/Gallery': 'A discussion.',
-  'Villain/Gallery': '<gallery>\nShared.png\nVillain kept.png\nVillain guide scan.png\n</gallery>',
+  'Villain/Gallery': '<gallery>\nShared.png\nVillain kept.png\nVillain guide scan.png\nNominated.png\n</gallery>',
   'Nobody/Gallery': '<gallery>\nKept.png\n</gallery>',
   Hero: '{{Infobox|name=Hero|gallery=true|bio=[[:File:Hero guide scan.png|(Scan)]]}}\nIntro.\n\n==Gallery==\n{{main|/Gallery}}\n\n==Story==\nText.',
   'Fan page': '{{:Hero/Gallery}}',
   'Category:Images of Hero': '{{category}}',
   'Category:Images of Villain': '{{category}}',
+  'File:Only here.png': 'An image.',
+  'File:Shared.png': 'An image.',
+  'File:Nominated.png': '{{Delete|reason=Already nominated.}}\nAn image.',
   'File:Kept.png': 'A description.\n[[Category:Renders]]',
   'File:Figure.jpg': 'A figure.',
   'File:Villain kept.png': 'A description.',
@@ -47,6 +51,7 @@ const FILES: Record<string, { shown: string[]; links?: string[]; redirects?: str
   'File:Villain kept.png': { shown: ['Villain/Gallery', 'Hero'] },
   'File:Hero guide scan.png': { shown: ['Hero/Gallery'], links: ['Hero'] },
   'File:Villain guide scan.png': { shown: ['Villain/Gallery'] },
+  'File:Nominated.png': { shown: ['Villain/Gallery'] },
 };
 
 /** Per page: what links to it, redirects to it and transcludes it. */
@@ -126,25 +131,36 @@ describe('planGalleryCleanup', async () => {
     );
   });
 
-  test('images only on galleries are deleted, noting galleries outside the batch', () => {
+  test('images only on galleries are nominated, not deleted, noting galleries outside the batch', () => {
+    assert.equal(of('file-delete').length, 0);
     assert.deepEqual(
-      of('file-delete').map(({ title, reason, usedBy }) => ({ title, reason, usedBy })),
+      of('file-nominate').map(({ id, title, reason }) => ({ id, title, reason })),
       [
-        { title: 'File:Only here.png', reason: 'only shown on Hero/Gallery', usedBy: [] },
+        { id: 'x1', title: 'File:Only here.png', reason: 'Only shown on Hero/Gallery (gallery page replaced by image categories)' },
         {
+          id: 'x2',
           title: 'File:Shared.png',
-          reason: "only shown on Hero/Gallery, Villain/Gallery, Third/Gallery; Third/Gallery isn't in this batch and would show a red link until it's deleted too",
-          usedBy: [],
+          reason: "Only shown on Hero/Gallery, Villain/Gallery, Third/Gallery (gallery pages replaced by image categories); Third/Gallery isn't in this batch and would show a red link if the file is deleted first",
         },
       ],
     );
   });
 
-  test('galleries, their talk pages and redirects are deleted; links from deleted pages do not count', () => {
+  test("the template goes at the top of the file's page, with the reason and no links; the image is tagged too", () => {
+    const only = manifest.edits.find((edit) => edit.title === 'File:Only here.png');
+    assert.equal(only?.text, '{{delete|reason=Only shown on Hero/Gallery (gallery page replaced by image categories)}}\nAn image.\n\n[[Category:Images of Hero]]');
+    assert.deepEqual(only?.entries, ['x1', 't1']);
+  });
+
+  test('a file already nominated is not nominated again, but is still tagged', () => {
+    assert.ok(!of('file-nominate').some((file) => file.title === 'File:Nominated.png'));
+    assert.equal(manifest.edits.find((edit) => edit.title === 'File:Nominated.png')?.text, '{{Delete|reason=Already nominated.}}\nAn image.\n\n[[Category:Images of Villain]]');
+  });
+
+  test("galleries, their talk pages and redirects are deleted, but not a nominated image's redirects; links from deleted pages do not count", () => {
     assert.deepEqual(
       of('page-delete').map(({ title, usedBy }) => ({ title, usedBy })),
       [
-        { title: 'File:Old only here.png', usedBy: [] },
         { title: 'Hero/Images', usedBy: [] },
         { title: 'Hero/Gallery', usedBy: [] },
         { title: 'Talk:Hero/Gallery', usedBy: [] },
@@ -158,7 +174,7 @@ describe('planGalleryCleanup', async () => {
   test("links are removed: the subject's gallery parameter, and a section left empty; links to files stay", () => {
     const hero = manifest.edits.find((edit) => edit.title === 'Hero');
     assert.equal(hero?.text, '{{Infobox|name=Hero|bio=[[:File:Hero guide scan.png|(Scan)]]}}\nIntro.\n\n==Story==\nText.');
-    assert.deepEqual(hero?.entries, ['p3']);
+    assert.deepEqual(hero?.entries, ['p2']);
     assert.deepEqual(
       manifest.usages.map(({ from, page, kind, status }) => [from, page, kind, status]),
       [
@@ -168,34 +184,40 @@ describe('planGalleryCleanup', async () => {
     );
   });
 
-  test('kept and moved images missing their category are tagged, one edit each', () => {
+  test('every image missing its category is tagged, nominated or not, with one edit per file page', () => {
     assert.deepEqual(
       of('category-tag').map(({ id, title, category }) => [id, title, category]),
       [
-        ['t1', 'File:Kept.png', 'Category:Images of Hero'],
-        ['t2', 'File:Hero guide scan.png', 'Category:Images of Hero'],
-        ['t3', 'File:Figure.jpg', 'Category:Images of Hero'],
-        ['t4', 'File:Villain kept.png', 'Category:Images of Villain'],
-        ['t5', 'File:Villain guide scan.png', 'Category:Images of Villain'],
-        ['t6', 'File:Kept.png', 'Category:Images of Nobody'],
+        ['t1', 'File:Only here.png', 'Category:Images of Hero'],
+        ['t2', 'File:Shared.png', 'Category:Images of Hero'],
+        ['t3', 'File:Kept.png', 'Category:Images of Hero'],
+        ['t4', 'File:Hero guide scan.png', 'Category:Images of Hero'],
+        ['t5', 'File:Figure.jpg', 'Category:Images of Hero'],
+        ['t6', 'File:Shared.png', 'Category:Images of Villain'],
+        ['t7', 'File:Villain kept.png', 'Category:Images of Villain'],
+        ['t8', 'File:Villain guide scan.png', 'Category:Images of Villain'],
+        ['t9', 'File:Nominated.png', 'Category:Images of Villain'],
+        ['t10', 'File:Kept.png', 'Category:Images of Nobody'],
       ],
     );
     assert.deepEqual(
-      manifest.edits.filter((edit) => edit.title.startsWith('File:')).map((edit) => [edit.title, edit.entries, edit.text]),
+      manifest.edits.filter((edit) => edit.title.startsWith('File:') && edit.title !== 'File:Only here.png' && edit.title !== 'File:Shared.png').map((edit) => [edit.title, edit.entries, edit.text]),
       [
-        ['File:Kept.png', ['t1', 't6'], 'A description.\n[[Category:Renders]]\n[[Category:Images of Hero]]\n[[Category:Images of Nobody]]'],
-        ['File:Hero guide scan.png', ['t2'], 'A scan.\n\n[[Category:Images of Hero]]'],
-        ['File:Figure.jpg', ['t3'], 'A figure.\n\n[[Category:Images of Hero]]'],
-        ['File:Villain kept.png', ['t4'], 'A description.\n\n[[Category:Images of Villain]]'],
-        ['File:Villain guide scan.png', ['t5'], 'A scan.\n\n[[Category:Images of Villain]]'],
+        ['File:Nominated.png', ['t9'], '{{Delete|reason=Already nominated.}}\nAn image.\n\n[[Category:Images of Villain]]'],
+        ['File:Kept.png', ['t3', 't10'], 'A description.\n[[Category:Renders]]\n[[Category:Images of Hero]]\n[[Category:Images of Nobody]]'],
+        ['File:Hero guide scan.png', ['t4'], 'A scan.\n\n[[Category:Images of Hero]]'],
+        ['File:Figure.jpg', ['t5'], 'A figure.\n\n[[Category:Images of Hero]]'],
+        ['File:Villain kept.png', ['t7'], 'A description.\n\n[[Category:Images of Villain]]'],
+        ['File:Villain guide scan.png', ['t8'], 'A scan.\n\n[[Category:Images of Villain]]'],
       ],
     );
+    assert.deepEqual(manifest.edits.find((edit) => edit.title === 'File:Shared.png')?.entries, ['x2', 't2', 't6']);
   });
 
   test('nothing is approved but new pages and tags', () => {
     assert.deepEqual(
       manifest.entries.filter((entry) => entry.kind !== 'question' && entry.approved).map((entry) => entry.id),
-      ['n1', 't1', 't2', 't3', 't4', 't5', 't6'],
+      ['n1', 't1', 't2', 't3', 't4', 't5', 't6', 't7', 't8', 't9', 't10'],
     );
   });
 });
@@ -204,20 +226,20 @@ describe('planGalleryCleanup with saved answers', async () => {
   const answered = 'T';
   const answers = new Map<string, Answer>([
     ['File:Figure.jpg', { about: 'File:Figure.jpg', choice: 'keep', answered }],
-    ['File:Hero guide scan.png', { about: 'File:Hero guide scan.png', choice: 'delete', answered }],
+    ['File:Hero guide scan.png', { about: 'File:Hero guide scan.png', choice: 'nominate', answered }],
     ['File:Villain guide scan.png', { about: 'File:Villain guide scan.png', choice: 'other', text: 'Ask the uploader first.', answered }],
   ]);
   const manifest = await planGalleryCleanup(wiki(), profile, ['Hero/Gallery', 'Villain/Gallery'], { answers });
   const of = <K extends ManifestEntry['kind']>(kind: K) => manifest.entries.filter((entry): entry is Extract<ManifestEntry, { kind: K }> => entry.kind === kind);
 
-  test('unanswered file questions offer keep and delete', async () => {
+  test('unanswered file questions offer keep and nominate', async () => {
     const unanswered = await planGalleryCleanup(wiki(), profile, ['Hero/Gallery']);
     assert.deepEqual(
       unanswered.entries.filter((entry) => entry.kind === 'question').map((question) => [question.about, question.choices]),
       [
         ['Hero/Gallery', undefined],
-        ['File:Hero guide scan.png', ['keep', 'delete']],
-        ['File:Figure.jpg', ['keep', 'delete']],
+        ['File:Hero guide scan.png', ['keep', 'nominate']],
+        ['File:Figure.jpg', ['keep', 'nominate']],
       ],
     );
   });
@@ -227,17 +249,29 @@ describe('planGalleryCleanup with saved answers', async () => {
     assert.ok(of('category-tag').some((tag) => tag.title === 'File:Figure.jpg'));
   });
 
-  test('"delete" deletes it after all, and a page still linking blocks that', () => {
-    const scan = of('file-delete').find((file) => file.title === 'File:Hero guide scan.png');
-    assert.equal(scan?.reason, 'only shown on Hero/Gallery; you answered delete');
-    assert.deepEqual(scan?.usedBy, ['Hero']);
-    assert.deepEqual(scan?.errors.map((error) => error.code), ['in-use']);
-    assert.ok(!of('category-tag').some((tag) => tag.title === 'File:Hero guide scan.png'));
+  test('"nominate" nominates it after all, noting the pages still linking, and still tags it', () => {
+    const scan = of('file-nominate').find((file) => file.title === 'File:Hero guide scan.png');
+    assert.equal(scan?.reason, 'Only shown on Hero/Gallery (gallery page replaced by image categories); you chose to nominate it; still linked from Hero');
+    assert.ok(manifest.edits.find((edit) => edit.title === 'File:Hero guide scan.png')?.text.startsWith('{{delete|reason=Only shown on Hero/Gallery (gallery page replaced by image categories)}}\n'));
+    assert.ok(of('category-tag').some((tag) => tag.title === 'File:Hero guide scan.png'));
   });
 
   test('free text is asked again, with the answer', () => {
     const question = of('question').find((candidate) => candidate.about === 'File:Villain guide scan.png');
     assert.equal(question?.answer, 'Ask the uploader first.');
-    assert.deepEqual(question?.choices, ['keep', 'delete']);
+    assert.deepEqual(question?.choices, ['keep', 'nominate']);
+  });
+});
+
+describe('planGalleryCleanup and the profile rules', () => {
+  test('a new image category that adds a forbidden template is an error', async () => {
+    const strict = { ...profile, rules: { createPagesIn: ['Category'], forbiddenTemplates: ['category'] } } as Profile;
+    const manifest = await planGalleryCleanup(wiki(), strict, ['Nobody/Gallery']);
+    const created = manifest.entries.find((entry) => entry.kind === 'page-create');
+    assert.deepEqual(created?.kind === 'page-create' ? [created.title, created.approved, created.errors.map((error) => error.code)] : undefined, [
+      'Category:Images of Nobody',
+      false,
+      ['forbidden-template'],
+    ]);
   });
 });

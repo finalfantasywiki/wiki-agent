@@ -25,6 +25,7 @@ import { ANSWERS_DIR, CHOICES, loadAnswers, saveAnswers, type AnswerInput } from
 import { carryApprovals, loadManifest, MANIFESTS_DIR, saveManifest, setApproval, type Manifest } from '../plans/manifest.ts';
 import { renderManifest } from '../plans/render-manifest.ts';
 import type { Profile } from '../profile.ts';
+import { checkProfileReview, loadReviewedFiles, reviewText, type ReviewedFiles, type ReviewStatus } from '../profile-review.ts';
 import { userAgent, type WikiClient } from '../wiki/client.ts';
 import { OPENS_REVIEW_PAGE, registerReviewPage } from './review-app.ts';
 import { findUsages, getFileInfo, getPages, listCategoryMembers } from '../wiki/read.ts';
@@ -42,6 +43,8 @@ export interface ServerContext {
   readonly answersDir?: string;
   /** The profile's guide (profiles/<name>/guide.md), added to the server's instructions. */
   readonly guide?: string;
+  /** The profile's files as the community reviews them; replaceable in tests. Defaults to reading them from disk. */
+  readonly reviewedFiles?: () => Promise<ReviewedFiles>;
 }
 
 /** How to work with this server on any wiki; sent to the LLM as the server's instructions. */
@@ -58,8 +61,8 @@ You help maintain a MediaWiki wiki: renaming files and categories, fixing every 
 
 ## Deleting /Gallery pages
 1. A batch is one game's galleries: list them with \`list_category_members\` (e.g. on "Character galleries from Final Fantasy VII").
-2. Plan with \`plan_gallery_cleanup\`. Images shown only on /Gallery pages are deleted; the rest are tagged with the subject's image category, which is created first if it's missing (show the user its text); the galleries, their talk pages and redirects are deleted, and links to them removed.
-3. Before the user approves a file deletion, show them the files: \`get_file_info\` with \`thumbnails: true\` on the deletions. Point out odd ones (a name like "File:File:…", a file that may be worth keeping).
+2. Plan with \`plan_gallery_cleanup\`. Images shown only on /Gallery pages are nominated for deletion (the wiki's deletion template is added to their page; editors decide, and wiki-agent never deletes them); every image is tagged with the subject's image category, which is created first if it's missing (show the user its text); the galleries, their talk pages and redirects are deleted, and links to them removed.
+3. Before the user approves a nomination, show them the files: \`get_file_info\` with \`thumbnails: true\` on the nominations. Point out odd ones (a name like "File:File:…", a file that may be worth keeping).
 4. Questions in the plan (merchandise to move to the article, a scan that belongs on a guide book's page) are for the user; don't answer them yourself. Record each answer the user gives with \`answer_question\`: one of the question's choices, or their own words. Then plan again with \`replan\`, which applies the answers and keeps the user's approvals.
 
 ## Rules
@@ -94,8 +97,8 @@ export function createServer(context: ServerContext): McpServer {
     const planned = await planGalleryCleanup(client, profile, galleries, { answers: await loadAnswers(profile.name, answersDir) });
     const manifest = previous === undefined ? planned : carryApprovals(previous, planned);
     const paths = await save(manifest, manifestsDir);
-    const deletions = manifest.entries.filter((entry) => entry.kind === 'file-delete').length;
-    const look = deletions === 0 ? '' : `\n\n${deletions} file(s) to delete: show them to the user with get_file_info (thumbnails: true) before any are approved.`;
+    const nominations = manifest.entries.filter((entry) => entry.kind === 'file-nominate').length;
+    const look = nominations === 0 ? '' : `\n\n${nominations} file(s) to nominate for deletion: show them to the user with get_file_info (thumbnails: true) before any are approved.`;
     const replaced = previous === undefined ? '' : ` (replacing ${previous.id})`;
     return {
       ...text(`Saved manifest ${manifest.id}${replaced}\n- JSON: ${paths.json}\n- Review (with diffs): ${paths.markdown}${look}\n\n${renderManifest(manifest, { edits: 'none' })}`),
@@ -274,8 +277,8 @@ export function createServer(context: ServerContext): McpServer {
       title: 'Plan gallery cleanup',
       description: [
         `Plans deleting a batch of /Gallery pages on ${wiki} (e.g. one game's character galleries) and saves it as a manifest for the user to review. Nothing is changed on the wiki.`,
-        "Each gallery is handled whole: images shown only on /Gallery pages are deleted, the rest tagged with the subject's image category,",
-        'and the gallery, its talk page and redirects deleted, with links to them removed. File and page deletions start unapproved.',
+        "Each gallery is handled whole: images shown only on /Gallery pages are nominated for deletion (never deleted), every image is tagged with the subject's image category,",
+        'and the gallery, its talk page and redirects are deleted, with links to them removed. Nominations and page deletions start unapproved.',
         'Returns the manifest summary and where its files are.',
       ].join(' '),
       inputSchema: z.object({ galleries: titles.describe('/Gallery pages, e.g. "Tifa Lockhart/Gallery"') }),
@@ -372,7 +375,45 @@ export function createServer(context: ServerContext): McpServer {
     },
   );
 
+  server.registerTool(
+    'check_profile_review',
+    {
+      title: 'Check the profile review',
+      description:
+        `Whether ${wiki} has had the time its rules give to review this profile (profile.json and guide.md, posted on a wiki page) since it last changed. ` +
+        'Gives the text the user should post on that page when it is missing or out of date. Nothing is posted: the user does that.',
+      inputSchema: z.object({}),
+      annotations: READ_ONLY,
+    },
+    async () => {
+      const files = await (context.reviewedFiles ?? (() => loadReviewedFiles(profile.name)))();
+      const status = await checkProfileReview(client, profile, files);
+      if (status === undefined) return json({ state: 'not-required', message: `${profile.name}'s rules don't ask for a public review of the profile.` });
+      const days = profile.rules?.profileReview?.days ?? 0;
+      const post = status.state === 'missing' || status.state === 'outdated';
+      return {
+        ...text(
+          `${describeReview(status, days)}${post ? `\n\nPost this on ${status.page}, anywhere on the page (the rest of the page can say anything):\n\n${reviewText(files)}` : ''}`,
+        ),
+        structuredContent: { ...status },
+      };
+    },
+  );
+
   return server;
+}
+
+function describeReview(status: ReviewStatus, days: number): string {
+  switch (status.state) {
+    case 'missing':
+      return `${status.page} doesn't exist yet. The bot can run ${days} day(s) after the profile is posted there.`;
+    case 'outdated':
+      return `${status.page} doesn't show the current ${status.differs.join(' and ')}. Once it does, the bot can run ${days} day(s) later.`;
+    case 'waiting':
+      return `${status.page} has shown the current profile since ${status.since}. The ${days}-day review ends at ${status.readyAt}.`;
+    case 'ready':
+      return `${status.page} has shown the current profile since at least ${status.since}: the ${days}-day review is over.`;
+  }
 }
 
 /** Saves the manifest and its Markdown rendering (with diffs) side by side. */

@@ -44,6 +44,10 @@ describe('loadProfile', () => {
     // FF tokens live in Module:Codename/data, so the profile overrides nothing.
     assert.deepEqual(profile.vocabulary, { releaseTokens: {}, versionTokens: {}, versionNeutral: [] });
     assert.ok(hasBotPolicy(profile));
+    // Stricter than the wiki's other bot, by the community's request.
+    assert.match(profile.rules?.editSummary ?? '', /\{operator\}/);
+    assert.deepEqual(profile.rules?.createPagesIn, ['Category']);
+    assert.deepEqual(profile.rules?.forbiddenTemplates, ['bot-generated']);
   });
 
   test('loads the guide, if the profile has one', async () => {
@@ -109,13 +113,46 @@ describe('parseProfile', () => {
     assert.deepEqual(problemsOf(withField('imageHosts', ['img.test'])), ['imageHosts[0] must be a URL (got "img.test")']);
   });
 
+  test('operating rules are optional, and so is each rule', () => {
+    assert.equal(parseProfile(valid, 'test').rules, undefined);
+    assert.deepEqual(parseProfile(withField('rules', {}), 'test').rules, {});
+    const rules = {
+      editSummary: '{summary} (operator: [[User:{operator}]])',
+      profileReview: { page: 'User:Example Bot/Profile', days: 2 },
+      createPagesIn: ['Category', ''],
+      forbiddenTemplates: ['bot-generated'],
+    };
+    assert.deepEqual(parseProfile(withField('rules', rules), 'test').rules, rules);
+  });
+
+  test('operating rules are checked', () => {
+    assert.deepEqual(
+      problemsOf(
+        withField('rules', {
+          editSummary: 'Renamed by the bot',
+          profileReview: { page: 'User:Example Bot/Profile', days: 0 },
+          createPagesIn: 'Category',
+          forbiddenTemplates: [''],
+        }),
+      ),
+      [
+        'rules.editSummary must contain {summary} (got "Renamed by the bot")',
+        'rules.editSummary must contain {operator} (got "Renamed by the bot")',
+        'rules.profileReview.days must be a number greater than 0 (got 0)',
+        'rules.createPagesIn must be an array of strings (got "Category")',
+        'rules.forbiddenTemplates[0] must be a non-empty string (got "")',
+      ],
+    );
+  });
+
   test('gallery settings are optional, and checked when given', () => {
     assert.equal(parseProfile(valid, 'test').galleries, undefined);
-    const galleries = { imageCategory: 'Category:Images of {subject}', categoryText: '{{category |related=[[{subject}]] }}', linkParameters: ['gallery'], pointerTemplates: ['main'], moveSections: ['merchandise'], fileHomes: { scan: 'Guide book' } };
+    const galleries = { imageCategory: 'Category:Images of {subject}', categoryText: '{{category |related=[[{subject}]] }}', nominateText: '{{delete|reason={reason}}}', linkParameters: ['gallery'], pointerTemplates: ['main'], moveSections: ['merchandise'], fileHomes: { scan: 'Guide book' } };
     assert.deepEqual(parseProfile(withField('galleries', galleries), 'test').galleries, galleries);
-    assert.deepEqual(problemsOf(withField('galleries', { ...galleries, imageCategory: 'Category:Images', pointerTemplates: 'main' })), [
+    assert.deepEqual(problemsOf(withField('galleries', { ...galleries, imageCategory: 'Category:Images', nominateText: '{{delete}}', pointerTemplates: 'main' })), [
       'galleries.pointerTemplates must be an array of strings (got "main")',
       'galleries.imageCategory must contain {subject} (got "Category:Images")',
+      'galleries.nominateText must contain {reason} (got "{{delete}}")',
     ]);
   });
 

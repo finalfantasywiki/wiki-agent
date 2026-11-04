@@ -28,7 +28,7 @@
     "versionNeutral": []
   },
   "fileNaming": {
-    "types": ["render", "model", "sprite", "gameplay", "cutscene", "dialogue", "concept art", "menu portrait", "still"]
+    "types": ["render", "model", "sprite", "gameplay", "cutscene", "dialogue", "concept art", "menu portrait", "still", "promo art"]
   },
   "categoryPages": {
     "headerTemplate": "category",
@@ -37,9 +37,16 @@
   "galleries": {
     "imageCategory": "Category:Images of {subject}",
     "categoryText": "{{category |contains=all |namespace=file |related=[[{subject}]] }}\n[[Category:Images by character]]",
+    "nominateText": "{{delete|reason={reason}}}",
     "linkParameters": ["gallery"],
     "pointerTemplates": ["main", "see also", "see"],
     "moveSections": ["merchandise"],
     "fileHomes": { "ultimania omega scan": "Final Fantasy VII Ultimania Omega" }
+  },
+  "rules": {
+    "editSummary": "{summary} (operator: [[User:{operator}]])",
+    "profileReview": { "page": "User:Omega Mk.II Bot", "days": 2 },
+    "createPagesIn": ["Category"],
+    "forbiddenTemplates": ["bot-generated"]
   }
 }

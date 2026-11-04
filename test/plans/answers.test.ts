@@ -32,9 +32,9 @@ describe('answers', () => {
   test('a later answer about the same title replaces the earlier one, and others are kept', async () => {
     const dir = await temp();
     await saveAnswers('example', [{ about: 'File:A.png', choice: 'keep' }, { about: 'File:B.png', choice: 'keep' }], { dir, now: NOW });
-    const answers = await saveAnswers('example', [{ about: 'File:A.png', choice: 'delete' }], { dir, now: NOW });
+    const answers = await saveAnswers('example', [{ about: 'File:A.png', choice: 'nominate' }], { dir, now: NOW });
     assert.deepEqual([...answers.entries()].map(([about, answer]) => [about, answer.choice]), [
-      ['File:A.png', 'delete'],
+      ['File:A.png', 'nominate'],
       ['File:B.png', 'keep'],
     ]);
     assert.deepEqual(JSON.parse(await readFile(join(dir, 'example.json'), 'utf8')).answers.length, 2);
@@ -42,6 +42,12 @@ describe('answers', () => {
 
   test('free text must say something', async () => {
     await assert.rejects(saveAnswers('example', [{ about: 'File:A.png', choice: 'other', text: '  ' }], { dir: await temp() }));
+  });
+
+  test('an answer saved as "delete", before images were nominated instead, reads as "nominate"', async () => {
+    const dir = await temp();
+    await writeFile(join(dir, 'example.json'), JSON.stringify({ version: 1, wiki: 'example', answers: [{ about: 'File:A.png', choice: 'delete', answered: 'T' }] }));
+    assert.equal((await loadAnswers('example', dir)).get('File:A.png')?.choice, 'nominate');
   });
 
   test('a hand-edited file is checked', async () => {

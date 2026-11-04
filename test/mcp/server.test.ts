@@ -4,7 +4,8 @@ import { readFileSync } from 'node:fs';
 import type { LoadedRules } from '../../src/file-renames/load-vocabulary.ts';
 import { buildVocabulary } from '../../src/file-renames/vocabulary.ts';
 import { createServer, WORKFLOW } from '../../src/mcp/server.ts';
-import { loadProfile } from '../../src/profile.ts';
+import { reviewText, type ReviewedFiles } from '../../src/profile-review.ts';
+import { loadProfile, type Profile } from '../../src/profile.ts';
 import { fakeWiki } from '../helpers/fake-wiki.ts';
 import { connect, type TestClient } from '../helpers/mcp-client.ts';
 
@@ -61,6 +62,7 @@ describe('MCP server', () => {
     const { tools } = (await mcp.request('tools/list')) as { tools: Array<{ name: string; annotations?: { readOnlyHint?: boolean } }> };
     assert.deepEqual(tools.map((tool) => tool.name).sort(), [
       'answer_question',
+      'check_profile_review',
       'find_usages',
       'get_file_info',
       'get_pages',
@@ -170,5 +172,47 @@ describe('instructions', () => {
     const guided = await connect(createServer({ profile: await loadProfile('finalfantasy'), client, rules, guide: '# Guide\nUse sprites.' }));
     assert.equal(guided.initialized.instructions, `${WORKFLOW}\n\n# Guide\nUse sprites.`);
     await guided.close();
+  });
+});
+
+describe('check_profile_review', () => {
+  const FILES: ReviewedFiles = { 'profile.json': '{}', 'guide.md': '# Guide' };
+  /** A wiki whose review page has one revision, or none. */
+  const reviewWiki = (revision?: { timestamp: string; content: string }) =>
+    fakeWiki(() => ({
+      query: { pages: [revision === undefined ? { title: 'User:Omega Mk.II Bot', missing: true } : { title: 'User:Omega Mk.II Bot', revisions: [{ revid: 1, ...revision, slots: { main: { content: revision.content } } }] }] },
+    }));
+  const call = async (wiki: ReturnType<typeof reviewWiki>, profile?: Profile) => {
+    const server = await connect(createServer({ profile: profile ?? (await loadProfile('finalfantasy')), client: wiki, rules, reviewedFiles: async () => FILES }));
+    try {
+      return await server.callTool('check_profile_review', {});
+    } finally {
+      await server.close();
+    }
+  };
+  const textOf = (result: Awaited<ReturnType<typeof call>>) => (result.content[0] as { text: string }).text;
+
+  test('a missing page: says so, and gives the text to post', async () => {
+    const result = await call(reviewWiki());
+    assert.equal(result.isError, false);
+    assert.match(textOf(result), /^User:Omega Mk\.II Bot doesn't exist yet\. The bot can run 2 day\(s\) after/);
+    assert.ok(textOf(result).endsWith(reviewText(FILES)));
+  });
+
+  test('an out-of-date page says which file differs', async () => {
+    const result = await call(reviewWiki({ timestamp: '2026-01-01T00:00:00Z', content: reviewText({ ...FILES, 'guide.md': '# Old' }) }));
+    assert.match(textOf(result), /doesn't show the current guide\.md/);
+    assert.ok(textOf(result).endsWith(reviewText(FILES)));
+  });
+
+  test('a page that has shown the files long enough: ready, with no text to post', async () => {
+    const result = await call(reviewWiki({ timestamp: '2026-01-01T00:00:00Z', content: `About the bot.\n${reviewText(FILES)}` }));
+    assert.equal(textOf(result), 'User:Omega Mk.II Bot has shown the current profile since at least 2026-01-01T00:00:00Z: the 2-day review is over.');
+  });
+
+  test('a profile without the rule needs no review', async () => {
+    const { rules: _, ...profile } = await loadProfile('finalfantasy');
+    const result = await call(reviewWiki(), profile);
+    assert.equal(parse(result.content[0]).state, 'not-required');
   });
 });

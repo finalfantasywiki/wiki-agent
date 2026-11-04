@@ -114,6 +114,32 @@ export async function getPages(client: WikiClient, titles: readonly string[]): P
   });
 }
 
+export interface Revision {
+  readonly revid: number;
+  readonly timestamp: string;
+  readonly content: string;
+}
+
+/**
+ * A page's revisions with their text, newest first, fetched a batch at a time
+ * as the caller reads on; stop early to stop fetching. Nothing for a missing page.
+ */
+export async function* revisionHistory(client: WikiClient, title: string, batchSize = 20): AsyncGenerator<Revision> {
+  type Raw = { revisions?: Array<{ revid: number; timestamp: string; slots: { main: { content: string } } }> };
+  for await (const body of queryAll<{ pages: Raw[] }>(client, {
+    prop: 'revisions',
+    titles: title,
+    rvprop: 'ids|timestamp|content',
+    rvslots: 'main',
+    rvdir: 'older',
+    rvlimit: String(batchSize),
+  })) {
+    for (const revision of body.query?.pages?.[0]?.revisions ?? []) {
+      yield { revid: revision.revid, timestamp: revision.timestamp, content: revision.slots.main.content };
+    }
+  }
+}
+
 /**
  * The pages each title transcludes, directly or through other templates
  * (prop=templates). With `among`, only those pages are checked for, which is
@@ -252,6 +278,15 @@ export async function pagesExist(client: WikiClient, titles: readonly string[]):
     }
   }
   return titles.map((title) => result.get(title)!);
+}
+
+/**
+ * The name of a title's namespace as the wiki shows it ("Category", "" for
+ * main). A colon alone doesn't make one: "Final Fantasy VII: Advent Children"
+ * is in main. Needs the wiki's namespaces loaded (client.getSiteInfo()).
+ */
+export function namespaceName(client: WikiClient, title: string): string {
+  return new client.Title(title).getNamespacePrefix().replace(/:$/, '').replaceAll('_', ' ');
 }
 
 // --- Plumbing -----------------------------------------------------------------

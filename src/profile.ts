@@ -24,6 +24,29 @@ export interface Profile {
   readonly categoryPages?: CategoryPages;
   /** How /Gallery subpages are replaced by image categories. Optional; the gallery cleanup needs it. */
   readonly galleries?: GallerySettings;
+  /** The wiki's rules for running the bot, enforced by the planner and executor. Optional. */
+  readonly rules?: OperatingRules;
+}
+
+/**
+ * Rules the wiki's community sets for running the bot. Every field is
+ * optional; a missing one doesn't restrict anything.
+ */
+export interface OperatingRules {
+  /**
+   * Edit summary format, with "{summary}" for what the edit does and
+   * "{operator}" for the human running the bot (from credentials.json).
+   */
+  readonly editSummary?: string;
+  /**
+   * A wiki page where profile.json and guide.md are posted. The executor runs
+   * only when the page matches them and hasn't changed for `days` days.
+   */
+  readonly profileReview?: { readonly page: string; readonly days: number };
+  /** Namespaces (as the wiki names them, "" for main) the bot may create pages in. */
+  readonly createPagesIn?: readonly string[];
+  /** Templates the bot never adds to a page. */
+  readonly forbiddenTemplates?: readonly string[];
 }
 
 export interface GallerySettings {
@@ -31,6 +54,12 @@ export interface GallerySettings {
   readonly imageCategory: string;
   /** The text of a new image category, with "{subject}" too, for subjects that don't have one yet. */
   readonly categoryText: string;
+  /**
+   * What's added to the top of a gallery-only image's page to nominate it for
+   * deletion, with "{reason}": "{{delete|reason={reason}}}". Editors decide;
+   * wiki-agent never deletes those images.
+   */
+  readonly nominateText: string;
   /** Template parameters on the subject's page that link to its gallery, e.g. "gallery" (|gallery=true on an infobox). */
   readonly linkParameters: readonly string[];
   /** Templates that point readers to a page ({{main|/Gallery}}); removed with the gallery. */
@@ -172,15 +201,20 @@ export function parseProfile(json: unknown, source: string): Profile {
           galleries: {
             imageCategory: check.string(galleries?.imageCategory, 'galleries.imageCategory'),
             categoryText: check.string(galleries?.categoryText, 'galleries.categoryText'),
+            nominateText: check.string(galleries?.nominateText, 'galleries.nominateText'),
             linkParameters: check.stringArray(galleries?.linkParameters, 'galleries.linkParameters'),
             pointerTemplates: check.stringArray(galleries?.pointerTemplates, 'galleries.pointerTemplates'),
             moveSections: check.stringArray(galleries?.moveSections, 'galleries.moveSections'),
             fileHomes: check.stringRecord(galleries?.fileHomes, 'galleries.fileHomes'),
           },
         }),
+    ...(root?.rules === undefined ? {} : { rules: parseRules(root.rules, check, problems) }),
   };
   if (profile.galleries !== undefined && !profile.galleries.imageCategory.includes('{subject}')) {
     problems.push(`galleries.imageCategory must contain {subject} (got ${JSON.stringify(profile.galleries.imageCategory)})`);
+  }
+  if (profile.galleries !== undefined && !profile.galleries.nominateText.includes('{reason}')) {
+    problems.push(`galleries.nominateText must contain {reason} (got ${JSON.stringify(profile.galleries.nominateText)})`);
   }
 
   if (problems.length > 0) {
@@ -189,6 +223,37 @@ export function parseProfile(json: unknown, source: string): Profile {
   // Placeholder values returned for invalid fields never escape: any problem
   // throws above.
   return profile;
+}
+
+function parseRules(json: unknown, check: Checker, problems: string[]): OperatingRules {
+  const rules = check.object(json, 'rules');
+  const review = rules?.profileReview === undefined ? undefined : check.object(rules.profileReview, 'rules.profileReview');
+
+  const editSummary = rules?.editSummary === undefined ? undefined : check.string(rules.editSummary, 'rules.editSummary');
+  for (const placeholder of ['{summary}', '{operator}']) {
+    if (editSummary !== undefined && editSummary !== '' && !editSummary.includes(placeholder)) {
+      problems.push(`rules.editSummary must contain ${placeholder} (got ${JSON.stringify(editSummary)})`);
+    }
+  }
+
+  return {
+    ...(editSummary === undefined ? {} : { editSummary }),
+    ...(rules?.profileReview === undefined
+      ? {}
+      : {
+          profileReview: {
+            page: check.string(review?.page, 'rules.profileReview.page'),
+            days: check.positiveNumber(review?.days, 'rules.profileReview.days'),
+          },
+        }),
+    // Each name may be "" (the main namespace).
+    ...(rules?.createPagesIn === undefined
+      ? {}
+      : { createPagesIn: check.stringArray(rules.createPagesIn, 'rules.createPagesIn', { allowEmptyItems: true }) }),
+    ...(rules?.forbiddenTemplates === undefined
+      ? {}
+      : { forbiddenTemplates: check.stringArray(rules.forbiddenTemplates, 'rules.forbiddenTemplates') }),
+  };
 }
 
 /** Whether the profile says how the bot was approved; write tools require it. */
@@ -252,7 +317,7 @@ class Checker {
     return allowed[0] as T;
   }
 
-  stringArray(value: unknown, path: string, { nonEmpty = false } = {}): string[] {
+  stringArray(value: unknown, path: string, { nonEmpty = false, allowEmptyItems = false } = {}): string[] {
     if (!Array.isArray(value)) {
       this.#problem(path, 'must be an array of strings', value);
       return [];
@@ -260,7 +325,7 @@ class Checker {
     if (nonEmpty && value.length === 0) {
       this.#problem(path, 'must not be empty', value);
     }
-    return value.map((item, i) => this.string(item, `${path}[${i}]`));
+    return value.map((item, i) => this.string(item, `${path}[${i}]`, { allowEmpty: allowEmptyItems }));
   }
 
   stringRecord(value: unknown, path: string): Record<string, string> {

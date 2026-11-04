@@ -1,7 +1,9 @@
 // Plans deleting a batch of /Gallery pages (e.g. one game's character
 // galleries) into one manifest. For each gallery:
-// - images shown only on /Gallery pages are deleted (never approved by
-//   default, so they're shown first); redirects to them go too;
+// - images shown only on /Gallery pages are nominated for deletion (the
+//   profile's nominateText added to their page; never approved by default),
+//   and tagged like the rest, so editors can save one by removing the
+//   template. wiki-agent never deletes them;
 // - images that stay are tagged with the subject's image category
 //   (Category:Images of Tifa Lockhart) if they aren't in it yet; a missing
 //   category is created first, from the profile's text;
@@ -17,7 +19,7 @@
 //   heading it leaves empty), [[…/Gallery]] links. A page whose link can't be
 //   removed blocks the deletion it links to.
 // An image asked about can be answered (answers.ts): "keep" tags it without
-// asking again, "delete" deletes it after all, and free text is asked again
+// asking again, "nominate" nominates it after all, and free text is asked again
 // with the answer, for the LLM.
 // Pages deleted in the same batch don't count as links or usages. The wiki's
 // settings (category names, parameters, templates) come from the profile's
@@ -28,11 +30,12 @@
 
 import { createPatch } from 'diff';
 import { CHOICES, type Answer } from '../plans/answers.ts';
-import { buildManifest, type CategoryTagInput, type FileDeleteInput, type Manifest, type PageCreateInput, type PageDeleteInput, type QuestionInput } from '../plans/manifest.ts';
+import { buildManifest, type CategoryTagInput, type FileNominateInput, type Manifest, type PageCreateInput, type PageDeleteInput, type QuestionInput } from '../plans/manifest.ts';
 import type { PageEdit, PageLeftover, Usage } from '../plans/reference-edits.ts';
+import { applyRules } from '../plans/rules.ts';
 import type { GallerySettings, Profile } from '../profile.ts';
 import type { WikiClient } from '../wiki/client.ts';
-import { findUsages, getPages, pagesExist, type PageRef } from '../wiki/read.ts';
+import { findUsages, getPages, namespaceName, pagesExist, type PageRef } from '../wiki/read.ts';
 import type { Rewrite } from '../wikitext/references.ts';
 import { removeLinks } from '../wikitext/unlink.ts';
 import { classifyGalleryImages, type ClassifiedImage } from './classify.ts';
@@ -61,7 +64,7 @@ export async function planGalleryCleanup(client: WikiClient, profile: Profile, g
   const questions: QuestionInput[] = [];
   const pageCreations: PageCreateInput[] = [];
   const pageDeletions: Array<Omit<PageDeleteInput, 'usedBy'>> = [];
-  const fileDeletions: Array<Omit<FileDeleteInput, 'usedBy'> & { linkedFrom: readonly PageRef[]; galleries: readonly string[] }> = [];
+  const nominations: Array<FileNominateInput & { answered: boolean; linkedFrom: readonly PageRef[]; galleries: readonly string[] }> = [];
   const tags: Array<CategoryTagInput & { subject: string }> = [];
 
   const titles = galleries.map((title) => new client.Title(title).toText());
@@ -105,23 +108,24 @@ export async function planGalleryCleanup(client: WikiClient, profile: Profile, g
     const tag = () => {
       if (!image.inCategory) tags.push({ title: image.title, category, subject });
     };
-    const deleteFile = (reason: string) => {
-      fileDeletions.push({ title: image.title, reason, linkedFrom: image.linkedFrom, galleries: image.galleries, ...preview });
-      for (const redirect of image.redirects) pageDeletions.push({ title: redirect.title, reason: `redirect to ${image.title}, which is deleted` });
+    // Tagged too, so an image an editor saves is already where it belongs.
+    const nominate = (answered: boolean) => {
+      nominations.push({ title: image.title, reason: nominationReason(image.galleries), answered, linkedFrom: image.linkedFrom, galleries: image.galleries, ...preview });
+      tag();
     };
     /** An image kept for now: asked about, unless it was answered already. */
     const ask = (question: string) => {
       const answer = answers.get(image.title);
-      if (answer?.choice === 'delete') return deleteFile(`only shown on ${image.galleries.join(', ')}; you answered delete`);
+      if (answer?.choice === 'nominate') return nominate(true);
       if (answer?.choice !== 'keep') {
         questions.push({ about: image.title, question, choices: CHOICES, ...(answer?.choice === 'other' ? { answer: answer.text } : {}), ...preview });
       }
       tag();
     };
     switch (image.verdict) {
-      case 'delete': {
+      case 'nominate': {
         const home = homeOf(image.title);
-        if (home === undefined) return deleteFile(`only shown on ${image.galleries.join(', ')}`);
+        if (home === undefined) return nominate(false);
         return ask(`Only shown on ${image.galleries.join(', ')}, but it belongs on ${home}, so it's kept and tagged. Add it to ${home}.`);
       }
       case 'move':
@@ -129,7 +133,7 @@ export async function planGalleryCleanup(client: WikiClient, profile: Profile, g
       case 'linked': {
         const home = homeOf(image.title);
         const linking = image.linkedFrom.map((ref) => ref.title).join(', ');
-        return ask(`Only shown on ${image.galleries.join(', ')}, but linked from ${linking}, so it's kept and tagged. ${home === undefined ? 'Show it on a page that stays, or delete it.' : `Add it to ${home}.`}`);
+        return ask(`Only shown on ${image.galleries.join(', ')}, but linked from ${linking}, so it's kept and tagged. ${home === undefined ? 'Show it on a page that stays, or nominate it for deletion.' : `Add it to ${home}.`}`);
       }
       case 'keep':
         return tag();
@@ -140,7 +144,7 @@ export async function planGalleryCleanup(client: WikiClient, profile: Profile, g
   }
 
   // Everything this batch deletes, so it doesn't count as a usage of anything else.
-  const deleted = new Set([...pageDeletions.map((page) => page.title), ...fileDeletions.map((file) => file.title)]);
+  const deleted = new Set(pageDeletions.map((page) => page.title));
   const remaining = (refs: readonly PageRef[]) => [...new Set(refs.map((ref) => ref.title).filter((title) => !deleted.has(title)))];
 
   // Links to each page this batch deletes, from pages that stay.
@@ -153,8 +157,11 @@ export async function planGalleryCleanup(client: WikiClient, profile: Profile, g
 
   // Only links to deleted pages are removed. A file a staying page links to is kept, never unlinked.
   const unlinked = [...new Set(pageDeletions.map((page) => page.title))];
-  const { edits, leftovers } = await planEdits(client, settings, unlinked, links, tags, titles.filter(isGalleryPage));
+  const nominated = firstOfEach(nominations, (file) => file.title);
+  const templates = new Map(nominated.map((file) => [file.title, settings.nominateText.replaceAll('{reason}', file.reason)]));
+  const { edits, leftovers } = await planEdits(client, settings, unlinked, links, tags, templates, titles.filter(isGalleryPage));
   const tagged = new Set(edits.filter((edit) => edit.rewrites.some((rewrite) => rewrite.kind === 'category')).map((edit) => edit.title));
+  const nominatedNow = new Set(edits.filter((edit) => edit.rewrites.some((rewrite) => rewrite.kind === 'nominate')).map((edit) => edit.title));
   const fixed = new Set(edits.flatMap((edit) => edit.rewrites.map((rewrite) => `${edit.title}\n${rewrite.from}`)));
   const leftover = new Set(leftovers.map((left) => `${left.page}\n${left.from}`));
   const usages: Usage[] = firstOfEach(links, (link) => `${link.page}\n${link.from}`).map((link) => ({
@@ -163,19 +170,21 @@ export async function planGalleryCleanup(client: WikiClient, profile: Profile, g
   }));
   const stillLinking = (title: string) => [...new Set(usages.filter((usage) => usage.from === title && usage.status === 'unresolved').map((usage) => usage.page))];
 
-  return buildManifest({
+  const manifest = buildManifest({
     wiki: profile.name,
     api: profile.api,
     request: { task: 'gallery-cleanup', galleries: titles },
-    deletions: firstOfEach(fileDeletions, (file) => file.title).map((file) => ({
-      title: file.title,
-      pageUrl: file.pageUrl,
-      thumbUrl: file.thumbUrl,
-      reason: file.galleries.some((gallery) => !deleted.has(gallery))
-        ? `${file.reason}; ${file.galleries.filter((gallery) => !deleted.has(gallery)).join(', ')} isn't in this batch and would show a red link until it's deleted too`
-        : file.reason,
-      usedBy: remaining(file.linkedFrom),
-    })),
+    // A file whose page has the template already isn't nominated again.
+    nominations: nominated.filter((file) => nominatedNow.has(file.title)).map((file) => {
+      const outside = file.galleries.filter((gallery) => !deleted.has(gallery));
+      const linking = remaining(file.linkedFrom);
+      const notes = [
+        ...(file.answered ? ['you chose to nominate it'] : []),
+        ...(linking.length > 0 ? [`still linked from ${linking.join(', ')}`] : []),
+        ...(outside.length > 0 ? [`${outside.join(', ')} isn't in this batch and would show a red link if the file is deleted first`] : []),
+      ];
+      return { title: file.title, reason: [file.reason, ...notes].join('; '), pageUrl: file.pageUrl, thumbUrl: file.thumbUrl };
+    }),
     pageCreations,
     pageDeletions: firstOfEach(pageDeletions, (page) => page.title).map((page) => ({ title: page.title, reason: page.reason, usedBy: stillLinking(page.title) })),
     categoryTags: firstOfEach(tags, (tag) => `${tag.title}\n${tag.category}`)
@@ -185,10 +194,20 @@ export async function planGalleryCleanup(client: WikiClient, profile: Profile, g
     // Pages still linking are on each deletion's usedBy, which blocks it already.
     references: { edits, usages, leftovers, blocked: [] },
   });
+  return applyRules(manifest, profile.rules, (title) => namespaceName(client, title));
 }
 
 /**
- * One edit per page: links to `unlinked` (the deleted pages) removed, then categories added.
+ * The deletion template's reason, for whoever takes the nomination. It names
+ * the galleries without linking them: a link would keep them from being deleted.
+ */
+function nominationReason(galleries: readonly string[]): string {
+  return `Only shown on ${galleries.join(', ')} (gallery ${galleries.length === 1 ? 'page' : 'pages'} replaced by image categories)`;
+}
+
+/**
+ * One edit per page: links to `unlinked` (the deleted pages) removed, a
+ * nomination template added (`templates`, by file), then categories added.
  * The subject's own page also loses its gallery link parameters.
  */
 async function planEdits(
@@ -197,12 +216,15 @@ async function planEdits(
   unlinked: readonly string[],
   links: ReadonlyArray<{ readonly page: string }>,
   tags: readonly CategoryTagInput[],
+  templates: ReadonlyMap<string, string>,
   galleries: readonly string[],
 ): Promise<{ edits: PageEdit[]; leftovers: PageLeftover[] }> {
   const categories = new Map<string, string[]>();
   for (const tag of tags) categories.set(tag.title, [...new Set([...(categories.get(tag.title) ?? []), tag.category])]);
   const linking = new Set(links.map((link) => link.page));
-  const titles = [...new Set([...linking, ...categories.keys()])];
+  const titles = [...new Set([...linking, ...templates.keys(), ...categories.keys()])];
+  // What every nomination starts with, to tell a page that has one already: "{{delete|reason=".
+  const opening = settings.nominateText.split('{reason}')[0]!.toLowerCase();
 
   const edits: PageEdit[] = [];
   const leftovers: PageLeftover[] = [];
@@ -220,6 +242,11 @@ async function planEdits(
       text = result.text;
       rewrites.push(...result.rewrites);
       leftovers.push(...result.leftovers.map((left) => ({ ...left, page: page.title })));
+    }
+    const template = templates.get(page.title);
+    if (template !== undefined && !text.toLowerCase().includes(opening)) {
+      text = text === '' ? template : `${template}\n${text}`;
+      rewrites.push({ kind: 'nominate', from: page.title, before: '', after: template });
     }
     for (const category of categories.get(page.title) ?? []) {
       const tagged = addCategory(client, text, category);

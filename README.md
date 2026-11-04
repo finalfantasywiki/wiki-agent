@@ -10,7 +10,7 @@ wiki-agent runs as an MCP server, so it works from Claude Code or Claude Desktop
 
 1. **Mass renames:** pages, templates, files, and categories, with every reference fixed
 2. **Renames by convention:** walk a category, propose names that follow the wiki's naming rules, and update every page that uses them
-3. **Gallery cleanup:** replace /Gallery subpages with image categories: delete images only the galleries show, tag the rest, delete the galleries and remove every link to them
+3. **Gallery cleanup:** replace /Gallery subpages with image categories: tag every image with its category, nominate the ones only the galleries show for deletion (editors decide), delete the galleries and remove every link to them
 4. **Template reformatting** across pages
 5. **Lua module review:** find dead or duplicated code in Scribunto modules and suggest fixes
 6. **Patrol:** review new uploads and edits, and report questionable ones (e.g. to Discord)
@@ -53,6 +53,8 @@ npm run mcp -- finalfantasy   # the MCP server over stdio (read-only), for one p
 ## Using it from Claude Code
 
 `.mcp.json` registers the server (`wiki-agent`, for the `finalfantasy` profile) for Claude Code sessions started in this folder. Claude Code asks once before starting it. The server sends the LLM a workflow and the profile's `guide.md` as its instructions. Then ask for a plan, e.g. "plan renames for Category:Final Fantasy VII character images" or "plan deleting the galleries in Category:Character galleries from Final Fantasy VII". Manifests land in `manifests/`; open the `.md` one to review. In hosts that support MCP Apps, a review page also opens in the conversation: answer the questions, approve deletions and press **Re-plan** there.
+
+A profile can ask for its changes to be reviewed publicly before the bot runs (`rules.profileReview`; the FF Wiki's is 2 days on `User:Omega Mk.II Bot`). Ask "check the profile review": the `check_profile_review` tool says whether the page is up to date and how long is left, and gives the text to post when it isn't.
 
 It's started with `node` directly, not `npm run`, because npm's banner on stdout would break the protocol.
 

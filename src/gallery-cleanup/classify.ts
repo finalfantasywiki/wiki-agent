@@ -1,7 +1,7 @@
 // Decides what happens to each image on a /Gallery page once the gallery is
-// gone. The rule: an image shown only on /Gallery pages is deleted. Shared
-// galleries count as galleries, so an image on both Tifa's and Cloud's gallery
-// is still deleted. Exceptions:
+// gone. The rule: an image shown only on /Gallery pages is nominated for
+// deletion, for editors to decide on. Shared galleries count as galleries, so
+// an image on both Tifa's and Cloud's gallery is still nominated. Exceptions:
 // - in a section that should move to the character's article instead
 //   (merchandise, by default): kept, to be added to the article by hand;
 // - shown anywhere else: kept, and it should be in the character's image
@@ -14,7 +14,7 @@ import { getFileInfo, getFileUsages, type PageRef } from '../wiki/read.ts';
 import type { WikiClient } from '../wiki/client.ts';
 import { isGalleryPage, type GalleryImage, type GalleryPage, type Heading } from './gallery-page.ts';
 
-export type Verdict = 'delete' | 'move' | 'keep' | 'linked' | 'missing';
+export type Verdict = 'nominate' | 'move' | 'keep' | 'linked' | 'missing';
 
 export interface ClassifiedImage {
   readonly title: string;
@@ -28,7 +28,7 @@ export interface ClassifiedImage {
   readonly shownOn: readonly PageRef[];
   /** Pages linking to it ([[:File:X]]), except galleries; any of them keeps the file. */
   readonly linkedFrom: readonly PageRef[];
-  /** Redirects to it, deleted along with it. */
+  /** Redirects to it. They're left alone: whoever deletes the file deletes them too. */
   readonly redirects: readonly PageRef[];
   /** Whether it's in the character's image category already. */
   readonly inCategory: boolean;
@@ -43,7 +43,7 @@ const THUMB_WIDTH = 160;
 export interface ClassifyOptions {
   /** The category kept images belong in, e.g. "Category:Images of Tifa Lockhart". */
   readonly category: string;
-  /** Headings whose images move to the article instead of being deleted. */
+  /** Headings whose images move to the article instead of being nominated. */
   readonly moveSections?: RegExp;
 }
 
@@ -71,7 +71,7 @@ export async function classifyGalleryImages(client: WikiClient, page: GalleryPag
           ? 'linked'
           : image.headings.some((heading) => moveSections.test(heading.text))
             ? 'move'
-            : 'delete';
+            : 'nominate';
     return {
       title: image.title,
       verdict,

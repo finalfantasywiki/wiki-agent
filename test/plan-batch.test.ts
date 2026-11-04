@@ -86,6 +86,13 @@ describe('planBatch', () => {
     );
   });
 
+  test("the profile's rules apply: a page created where they don't allow it is an error", async () => {
+    const strict = { ...profile, rules: { ...profile.rules, createPagesIn: ['Template'] } };
+    const manifest = await planBatch(fakeWorld(world), strict, rules, { categories: [{ from: OLD_CAT, to: NEW_CAT }] });
+    const category = manifest.entries.find((entry) => entry.kind === 'category-rename');
+    assert.deepEqual(category?.kind === 'category-rename' ? [category.approved, category.errors.map((error) => error.code)] : undefined, [false, ['create-not-allowed']]);
+  });
+
   test('an empty batch makes an empty manifest without asking the wiki', async () => {
     const client = fakeWorld(world);
     const manifest = await planBatch(client, profile, rules, {});

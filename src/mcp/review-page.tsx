@@ -8,7 +8,7 @@ import { useApp, useHostStyles } from '@modelcontextprotocol/ext-apps/react';
 import type { App } from '@modelcontextprotocol/ext-apps';
 import { useEffect, useState, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
-import type { ReviewItem, ReviewView } from './review-view.ts';
+import type { ReviewFile, ReviewItem, ReviewView } from './review-view.ts';
 
 type Question = ReviewView['questions'][number];
 type Status = { readonly text: string; readonly error: boolean };
@@ -78,7 +78,7 @@ function ReviewPage() {
       await call(app, 'set_approval', { id: view.id, entries: ids, approved });
       const changed = new Set(ids);
       const update = <T extends ReviewItem>(list: readonly T[]) => list.map((item) => (changed.has(item.id) ? { ...item, approved } : item));
-      setView((before) => before && { ...before, fileDeletions: update(before.fileDeletions), pageCreations: update(before.pageCreations), pageDeletions: update(before.pageDeletions) });
+      setView((before) => before && { ...before, fileDeletions: update(before.fileDeletions), fileNominations: update(before.fileNominations), pageCreations: update(before.pageCreations), pageDeletions: update(before.pageDeletions) });
     }, `${approved ? 'Approved' : 'Unapproved'} ${ids.length} entr${ids.length === 1 ? 'y' : 'ies'}.`);
   };
 
@@ -119,20 +119,17 @@ function ReviewPage() {
           ))}
         </>
       )}
+      {view.fileNominations.length > 0 && (
+        <>
+          <Heading title="Files to nominate for deletion" items={view.fileNominations} {...page} />
+          <p className="muted">Each file's page gets the deletion template, for editors to decide on; nothing here deletes a file.</p>
+          <FileCards files={view.fileNominations} {...page} />
+        </>
+      )}
       {view.fileDeletions.length > 0 && (
         <>
           <Heading title="Files to delete" items={view.fileDeletions} {...page} />
-          <div className="cards">
-            {view.fileDeletions.map((file) => (
-              <div key={file.id} className={file.errors.length > 0 ? 'card blocked' : 'card'}>
-                <Thumbnail app={app} title={file.title} pageUrl={file.pageUrl} thumbUrl={file.thumbUrl} />
-                <Approval item={file} {...page} />
-                <div className="title"><Link app={app} url={file.pageUrl}>{file.title}</Link></div>
-                <div className="muted">{file.reason}</div>
-                {file.errors.map((message) => <div key={message} className="error">{message}</div>)}
-              </div>
-            ))}
-          </div>
+          <FileCards files={view.fileDeletions} {...page} />
         </>
       )}
       {view.pageCreations.length > 0 && (
@@ -241,6 +238,23 @@ function QuestionCard({ app, question, given, busy, onAnswer }: {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+/** Files as cards: thumbnail, approval, link and reason. */
+function FileCards({ files, ...page }: PageProps & { readonly files: readonly ReviewFile[] }) {
+  return (
+    <div className="cards">
+      {files.map((file) => (
+        <div key={file.id} className={file.errors.length > 0 ? 'card blocked' : 'card'}>
+          <Thumbnail app={page.app} title={file.title} pageUrl={file.pageUrl} thumbUrl={file.thumbUrl} />
+          <Approval item={file} {...page} />
+          <div className="title"><Link app={page.app} url={file.pageUrl}>{file.title}</Link></div>
+          <div className="muted">{file.reason}</div>
+          {file.errors.map((message) => <div key={message} className="error">{message}</div>)}
+        </div>
+      ))}
     </div>
   );
 }

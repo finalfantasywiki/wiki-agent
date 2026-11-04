@@ -134,6 +134,10 @@ describe('renderManifest: pages to create and delete, and category tags', () => 
           { title: 'Talk:Tifa Lockhart/Gallery', reason: 'talk page of a deleted gallery', usedBy: ['Forum:Old thread'] },
         ],
         categoryTags: [{ title: 'File:Kept.png', category: 'Category:Images of Tifa Lockhart' }],
+        nominations: [
+          { title: 'File:Only here.png', reason: 'Only shown on Tifa Lockhart/Gallery', pageUrl: 'https://wiki.test/wiki/File:Only_here.png', thumbUrl: 'https://img.test/thumb/Only.png' },
+          { title: 'File:Also here.png', reason: 'Only shown on Tifa Lockhart/Gallery' },
+        ],
         references: { edits: [], usages: [], leftovers: [], blocked: [] },
       },
       { id: '3f1c2a64-8d0e-4c5b-9a7e-2b6d1f0c9e88', now: new Date('2026-11-02T12:00:00Z') },
@@ -141,6 +145,7 @@ describe('renderManifest: pages to create and delete, and category tags', () => 
   );
 
   test('in the summary', () => {
+    assert.ok(markdown.includes('| Nominated for deletion | 2 | 0 | 0 |'));
     assert.ok(markdown.includes('| Pages to create | 1 | 1 | 0 |'));
     assert.ok(markdown.includes('| Pages to delete | 2 | 0 | 1 |'));
     assert.ok(markdown.includes('| Category tags | 1 | 1 | 0 |'));
@@ -158,6 +163,12 @@ describe('renderManifest: pages to create and delete, and category tags', () => 
 
   test('category tags', () => {
     assert.ok(markdown.includes('| t1 | ✅ | File:Kept.png | Category:Images of Tifa Lockhart |  |'));
+  });
+
+  test('files to nominate, with their thumbnails, saying nothing is deleted', () => {
+    assert.ok(markdown.includes("## Files to nominate for deletion\n\nEach file's page gets the deletion template, for editors to decide on; nothing here deletes a file.\n\n| ID | Approved | Image | File | Reason |"));
+    assert.ok(markdown.includes('| x1 | ⬜ | <a href="https://wiki.test/wiki/File:Only_here.png"><img src="https://img.test/thumb/Only.png"'));
+    assert.ok(markdown.includes('| x2 | ⬜ |  | File:Also here.png | Only shown on Tifa Lockhart/Gallery |'));
   });
 });
 
@@ -247,8 +258,8 @@ describe('renderManifest: answering questions', () => {
         wiki: 'finalfantasy',
         api: 'https://finalfantasy.fandom.com/api.php',
         questions: [
-          { about: 'File:Figure.jpg', question: 'Add it to Hero.', choices: ['keep', 'delete'] },
-          { about: 'File:Scan.png', question: 'Add it to Guide book.', choices: ['keep', 'delete'], answer: 'Ask the uploader first.' },
+          { about: 'File:Figure.jpg', question: 'Add it to Hero.', choices: ['keep', 'nominate'] },
+          { about: 'File:Scan.png', question: 'Add it to Guide book.', choices: ['keep', 'nominate'], answer: 'Ask the uploader first.' },
           { about: 'Hero/Gallery', question: 'Which file is Bad<name>.png?' },
         ],
         references: { edits: [], usages: [], leftovers: [], blocked: [] },
@@ -258,7 +269,7 @@ describe('renderManifest: answering questions', () => {
   );
 
   test('a question with choices lists them, and free text', () => {
-    assert.ok(markdown.includes('- **q1** · File:Figure.jpg: Add it to Hero.\n  - Answer: keep it and tag it · delete it · or in your own words'));
+    assert.ok(markdown.includes('- **q1** · File:Figure.jpg: Add it to Hero.\n  - Answer: keep it and tag it · nominate it for deletion · or in your own words'));
   });
 
   test('a free-text answer is shown instead', () => {

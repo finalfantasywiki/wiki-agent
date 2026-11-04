@@ -8,7 +8,7 @@
 <Release title>[ <more>] <Type>[ <N>].<ext>
 ```
 
-The last form is only for a subject that is itself a release missing from `get_vocabulary`, so the name already says what it's from: `Final Fantasy VII Technical Demo for PS3 still.jpg`. Start with the release's full title. Anything else uses the first two forms.
+The last form is only for a subject that is itself a release missing from `get_vocabulary` (`Final Fantasy VII Technical Demo for PS3 still.jpg`), or for promo art of a whole series rather than one release (`Final Fantasy VII 10th anniversary promo art.jpg`), so the name already says what it's from. Start with the release's full title. Anything else uses the first two forms.
 
 Get release and version tokens from `get_vocabulary`; never invent one. Check every name with `validate_name` before planning.
 
@@ -30,6 +30,7 @@ Get release and version tokens from `get_vocabulary`; never invent one. Check ev
 |---|---|
 | `render` | A rendered 3D character or object. `battle render` in battle, `field render` out in gameplay (towns, the world map). |
 | `promo render` | A render Square Enix supplied to promote the game. An in-game model rendered by someone else is a plain `render`. Sometimes can be more specific, such as `bust render`. |
+| `promo art` | A drawn or painted illustration made to promote a game or the series, rather than to design it (that's `concept art`): anniversary art, album art, release art. Art for the series rather than one game uses the titled form: `Final Fantasy VII 10th anniversary promo art.jpg`. |
 | `model` | An in-game 3D model (`battle model`, `field model`). |
 | `sprite` | 2D games use sprites, not models or renders (`battle sprite`, `field sprite`). Characters from 2D games are almost always sprites: `Terra Branford from FFVI sprite.png`. Renders are rare there (for FFVI, only the PS version's CG cutscenes have them). |
 | `menu portrait` | Many games use portraits depicting a character in dialogue. A "menu portrait" can fill this. For games where the menu portrait is simply the reuse of a render from elsewhere, the render name suffices. |
@@ -57,3 +58,7 @@ Names like `Tifa-Hot.jpg` are common. Look at the image (`get_file_info` with `t
 ```
 
 New category pages start with `{{category |name=… |contains=all image |namespace=file |related=… }}`, then their parent categories, like the FFVII Remake categories. Give `related` (e.g. `[[:Category:Characters in Final Fantasy VII|characters in ''Final Fantasy VII'']]`). Model a new category on a correctly named sibling when one exists.
+
+## What the bot doesn't do
+
+The bot maintains files and categories; it doesn't write content. Never propose creating an article or writing its prose (fixing links, files and categories on a page is fine), and never add `{{bot-generated}}`: only Intangir Bot uses it. Planning refuses both (the profile's `rules`), so a plan that needs either is a question for the user instead.

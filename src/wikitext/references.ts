@@ -20,7 +20,8 @@ export interface Rename {
   readonly to: string;
 }
 
-export type ReferenceKind = 'embed' | 'link' | 'category' | 'gallery' | 'template';
+/** `nominate` isn't a reference: it's a deletion template added to a file's own page (gallery cleanup). */
+export type ReferenceKind = 'embed' | 'link' | 'category' | 'gallery' | 'template' | 'nominate';
 
 export interface Rewrite {
   readonly kind: ReferenceKind;

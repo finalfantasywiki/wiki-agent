@@ -1,6 +1,6 @@
 // A manifest is the reviewable record of one batch of planned changes: file
-// renames and deletions, category renames, pages to create or delete,
-// category tags, questions for the user, and every page edit (with diffs) they need. Planning builds it; the user approves
+// renames and deletions, files to nominate for deletion, category renames,
+// pages to create or delete, category tags, questions for the user, and every page edit (with diffs) they need. Planning builds it; the user approves
 // entries one by one; execution (phase 1) only ever runs approved entries.
 //
 // Manifests are saved as manifests/<id>.json and checked with a zod schema
@@ -14,7 +14,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { z } from 'zod';
-import { CHOICES, type Choice } from './answers.ts';
+import { ChoiceSchema, type Choice } from './answers.ts';
 import type { ReferencePlan } from './reference-edits.ts';
 
 // --- Schema -----------------------------------------------------------------------
@@ -70,6 +70,22 @@ const CategoryRenameEntry = z.object({
   warnings: Issues,
 });
 
+/**
+ * A file to nominate for deletion: a deletion template added to its page, for
+ * editors to decide on. wiki-agent never deletes it; whoever takes the
+ * nominations does (an admin, or a script over the template's category).
+ */
+const FileNominateEntry = z.object({
+  kind: z.literal('file-nominate'),
+  id: z.string(),
+  title: z.string(),
+  reason: z.string(),
+  ...Preview,
+  approved: z.boolean(),
+  errors: Issues,
+  warnings: Issues,
+});
+
 /** A page to create, e.g. a character's image category, before anything that needs it. */
 const PageCreateEntry = z.object({
   kind: z.literal('page-create'),
@@ -114,16 +130,16 @@ const QuestionEntry = z.object({
   about: z.string(),
   question: z.string(),
   /** The fixed answers it offers (answers.ts); free text is always possible too. */
-  choices: z.array(z.enum(CHOICES)).optional(),
+  choices: z.array(ChoiceSchema).optional(),
   /** A free-text answer already given, for the LLM to act on: no planner applies one. */
   answer: z.string().optional(),
   /** When it's about a file. */
   ...Preview,
 });
 
-const Entry = z.discriminatedUnion('kind', [FileRenameEntry, FileDeleteEntry, CategoryRenameEntry, PageCreateEntry, PageDeleteEntry, CategoryTagEntry, QuestionEntry]);
+const Entry = z.discriminatedUnion('kind', [FileRenameEntry, FileDeleteEntry, FileNominateEntry, CategoryRenameEntry, PageCreateEntry, PageDeleteEntry, CategoryTagEntry, QuestionEntry]);
 
-const Rewrite = z.object({ kind: z.enum(['embed', 'link', 'category', 'gallery', 'template']), from: z.string(), before: z.string(), after: z.string() });
+const Rewrite = z.object({ kind: z.enum(['embed', 'link', 'category', 'gallery', 'template', 'nominate']), from: z.string(), before: z.string(), after: z.string() });
 
 const PageEdit = z.object({
   title: z.string(),
@@ -192,6 +208,11 @@ export interface FileDeleteInput extends PreviewInput {
   readonly errors?: readonly ManifestIssue[];
 }
 
+export interface FileNominateInput extends PreviewInput {
+  readonly title: string;
+  readonly reason: string;
+}
+
 export interface CategoryRenameInput {
   readonly from: string;
   readonly to: string;
@@ -232,6 +253,8 @@ export interface ManifestInput {
   readonly api: string;
   readonly files?: readonly FileRenameInput[];
   readonly deletions?: readonly FileDeleteInput[];
+  /** Each needs a page edit in `references` with a `nominate` rewrite from its title. */
+  readonly nominations?: readonly FileNominateInput[];
   readonly categories?: readonly CategoryRenameInput[];
   /** Pages that don't exist yet; created first, before the entries that need them. */
   readonly pageCreations?: readonly PageCreateInput[];
@@ -328,6 +351,10 @@ export function buildManifest(input: ManifestInput, options: { id?: string; now?
       warnings: [],
     });
   }
+  for (const nomination of input.nominations ?? []) {
+    // Like a deletion, it's for the user to approve, file by file.
+    entries.push({ kind: 'file-nominate', id: next('x'), title: nomination.title, reason: nomination.reason, ...preview(nomination), approved: false, errors: [], warnings: [] });
+  }
   for (const category of input.categories ?? []) {
     const errors = [...category.errors, ...blockedIssue(category.from)];
     const warnings = [...category.warnings];
@@ -362,13 +389,15 @@ export function buildManifest(input: ManifestInput, options: { id?: string; now?
   }
 
   // Which entries each page edit serves, by the title its rewrites are from.
-  // A page can have several tags, each its own entry.
+  // A page can have several tags, each its own entry. A nomination edits the
+  // same file page as its tag, so it's found by the kind of rewrite too.
   const entriesFor = new Map<string, string[]>();
   const add = (title: string, id: string) => entriesFor.set(title, [...(entriesFor.get(title) ?? []), id]);
   for (const entry of entries) {
     if (entry.kind === 'file-rename' || entry.kind === 'category-rename') add(entry.from, entry.id);
     if (entry.kind === 'page-delete' || entry.kind === 'category-tag') add(entry.title, entry.id);
     if (entry.kind === 'file-delete' && entry.replacedBy !== undefined) add(entry.title, entry.id);
+    if (entry.kind === 'file-nominate') add(`nominate\n${entry.title}`, entry.id);
   }
   // An old category page is replaced by its new page (whose text is already
   // rewritten) and then removed, so editing it would be wasted.
@@ -380,7 +409,7 @@ export function buildManifest(input: ManifestInput, options: { id?: string; now?
     text: edit.text,
     diff: edit.diff,
     rewrites: edit.rewrites.map((rewrite) => ({ ...rewrite })),
-    entries: [...new Set(edit.rewrites.flatMap((rewrite) => entriesFor.get(rewrite.from) ?? []))],
+    entries: [...new Set(edit.rewrites.flatMap((rewrite) => entriesFor.get(rewrite.kind === 'nominate' ? `nominate\n${rewrite.from}` : rewrite.from) ?? []))],
   }));
 
   return ManifestSchema.parse({

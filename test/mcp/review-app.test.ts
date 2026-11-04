@@ -17,11 +17,12 @@ const manifest = buildManifest(
     wiki: 'finalfantasy',
     api: 'https://finalfantasy.fandom.com/api.php',
     request: { task: 'gallery-cleanup', galleries: ['Hero/Gallery'] },
-    questions: [{ about: 'File:Figure.jpg', question: 'Add it to Hero.', choices: ['keep', 'delete'], pageUrl: 'https://wiki.test/File:Figure.jpg', thumbUrl: 'https://img.test/Figure.jpg' }],
+    questions: [{ about: 'File:Figure.jpg', question: 'Add it to Hero.', choices: ['keep', 'nominate'], pageUrl: 'https://wiki.test/File:Figure.jpg', thumbUrl: 'https://img.test/Figure.jpg' }],
     deletions: [
       { title: 'File:Only here.png', reason: 'only shown on Hero/Gallery', usedBy: [], thumbUrl: 'https://img.test/Only.png' },
       { title: 'File:Linked.png', reason: 'r', usedBy: ['Hero'] },
     ],
+    nominations: [{ title: 'File:Nominee.png', reason: 'Only shown on Hero/Gallery', thumbUrl: 'https://img.test/Nominee.png' }],
     pageCreations: [{ title: 'Category:Images of Hero', text: '{{category}}', reason: 'for the images kept from Hero/Gallery' }],
     pageDeletions: [{ title: 'Hero/Gallery', reason: 'gallery replaced', usedBy: [] }],
     categoryTags: [{ title: 'File:Kept.png', category: 'Category:Images of Hero' }],
@@ -41,7 +42,7 @@ describe('reviewView', () => {
         question: 'Add it to Hero.',
         choices: [
           { choice: 'keep', label: 'keep it and tag it' },
-          { choice: 'delete', label: 'delete it' },
+          { choice: 'nominate', label: 'nominate it for deletion' },
         ],
         pageUrl: 'https://wiki.test/File:Figure.jpg',
         thumbUrl: 'https://img.test/Figure.jpg',
@@ -59,10 +60,15 @@ describe('reviewView', () => {
     assert.equal(view.replannable, true);
   });
 
+  test('files to nominate, with their previews, unapproved', () => {
+    assert.deepEqual(view.fileNominations, [{ id: 'x1', title: 'File:Nominee.png', reason: 'Only shown on Hero/Gallery', approved: false, errors: [], thumbUrl: 'https://img.test/Nominee.png' }]);
+  });
+
   test('a summary row per kind, and what blocks entries', () => {
     assert.deepEqual(view.summary.map((row) => [row.label, row.total, row.approved, row.withErrors]), [
       ['Questions', 1, 0, 0],
       ['File deletions', 2, 0, 1],
+      ['Files to nominate for deletion', 1, 0, 0],
       ['Pages to create', 1, 1, 0],
       ['Pages to delete', 1, 0, 0],
       ['Category tags', 1, 1, 0],

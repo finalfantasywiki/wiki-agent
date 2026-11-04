@@ -147,21 +147,23 @@ describe('gallery tools', () => {
   const summary = (manifest: Awaited<ReturnType<typeof loadManifest>>) =>
     manifest.entries.map((entry) => [entry.id, entry.kind, 'title' in entry ? entry.title : entry.kind === 'question' ? entry.about : '', entry.kind !== 'question' && entry.approved]);
 
-  test('plan_gallery_cleanup saves the manifest, and says to show the files to delete first', async () => {
+  test('plan_gallery_cleanup saves the manifest, and says to show the files to nominate first', async () => {
     const result = await gallery.callTool('plan_gallery_cleanup', { galleries: ['Hero/Gallery'] });
     assert.equal(result.isError, false, textOf(result));
-    assert.match(textOf(result), /1 file\(s\) to delete: show them to the user with get_file_info/);
+    assert.match(textOf(result), /1 file\(s\) to nominate for deletion: show them to the user with get_file_info/);
     const manifest = await loadManifest(idOf(result), dir);
     assert.deepEqual(summary(manifest), [
       ['q1', 'question', 'File:Figure.jpg', false],
-      ['d1', 'file-delete', 'File:Only here.png', false],
+      ['x1', 'file-nominate', 'File:Only here.png', false],
       ['p1', 'page-delete', 'Hero/Gallery', false],
-      ['t1', 'category-tag', 'File:Kept.png', true],
-      ['t2', 'category-tag', 'File:Figure.jpg', true],
+      ['t1', 'category-tag', 'File:Only here.png', true],
+      ['t2', 'category-tag', 'File:Kept.png', true],
+      ['t3', 'category-tag', 'File:Figure.jpg', true],
     ]);
     assert.deepEqual(manifest.request, { task: 'gallery-cleanup', galleries: ['Hero/Gallery'] });
     assert.deepEqual(manifest.edits.map((edit) => [edit.title, edit.text]), [
       ['Hero', '{{Infobox}}\nIntro.'],
+      ['File:Only here.png', '{{delete|reason=Only shown on Hero/Gallery (gallery page replaced by image categories)}}\n\n[[Category:Images of Hero]]'],
       ['File:Kept.png', 'Kept.\n\n[[Category:Images of Hero]]'],
       ['File:Figure.jpg', 'A figure.\n\n[[Category:Images of Hero]]'],
     ]);
@@ -169,7 +171,7 @@ describe('gallery tools', () => {
 
   test('answer_question saves answers; replan applies them and keeps approvals', async () => {
     const first = idOf(await gallery.callTool('plan_gallery_cleanup', { galleries: ['Hero/Gallery'] }));
-    assert.equal((await gallery.callTool('set_approval', { id: first, entries: ['d1'], approved: true })).isError, false);
+    assert.equal((await gallery.callTool('set_approval', { id: first, entries: ['x1'], approved: true })).isError, false);
     const answered = await gallery.callTool('answer_question', { id: first, answers: [{ question: 'q1', choice: 'keep' }] });
     assert.equal(answered.isError, false, textOf(answered));
     assert.match(textOf(answered), /File:Figure\.jpg → keep/);
@@ -179,10 +181,11 @@ describe('gallery tools', () => {
     const second = await loadManifest(idOf(replanned), dir);
     assert.notEqual(second.id, first);
     assert.deepEqual(summary(second), [
-      ['d1', 'file-delete', 'File:Only here.png', true],
+      ['x1', 'file-nominate', 'File:Only here.png', true],
       ['p1', 'page-delete', 'Hero/Gallery', false],
-      ['t1', 'category-tag', 'File:Kept.png', true],
-      ['t2', 'category-tag', 'File:Figure.jpg', true],
+      ['t1', 'category-tag', 'File:Only here.png', true],
+      ['t2', 'category-tag', 'File:Kept.png', true],
+      ['t3', 'category-tag', 'File:Figure.jpg', true],
     ]);
   });
 

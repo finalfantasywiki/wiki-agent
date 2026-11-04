@@ -14,9 +14,10 @@ import type { NamingRules } from './file-renames/file-name.ts';
 import { planNames, type RenameProposal } from './file-renames/plan-names.ts';
 import { buildManifest, type FileDeleteInput, type Manifest, type ManifestIssue, type QuestionInput } from './plans/manifest.ts';
 import { planReferenceEdits, type ReferencePlan } from './plans/reference-edits.ts';
+import { applyRules } from './plans/rules.ts';
 import type { Profile } from './profile.ts';
 import type { WikiClient } from './wiki/client.ts';
-import { findUsages, pagesExist } from './wiki/read.ts';
+import { findUsages, namespaceName, pagesExist } from './wiki/read.ts';
 import type { Rename } from './wikitext/references.ts';
 
 export interface BatchRequest {
@@ -87,7 +88,7 @@ export async function planBatch(client: WikiClient, profile: Profile, rules: Nam
     deletions.push({ title, reason: deletion.reason, usedBy, ...(replacedBy === undefined ? {} : { replacedBy }), errors });
   }
 
-  return buildManifest({
+  const manifest = buildManifest({
     wiki: profile.name,
     api: profile.api,
     files: names,
@@ -96,4 +97,5 @@ export async function planBatch(client: WikiClient, profile: Profile, rules: Nam
     questions: request.questions ?? [],
     references,
   });
+  return applyRules(manifest, profile.rules, (title) => namespaceName(client, title));
 }

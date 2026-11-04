@@ -1,6 +1,6 @@
 // Answers to a manifest's questions, saved per wiki so that planning again
 // applies them instead of asking again. A question can offer fixed choices
-// (keep a file, delete it); "other" is free text, which no planner applies:
+// (keep a file, nominate it for deletion); "other" is free text, which no planner applies:
 // it's shown with the question, for the LLM to act on.
 //
 // Saved as answers/<wiki>.json (gitignored), one answer per title a question
@@ -12,13 +12,16 @@ import { join } from 'node:path';
 import { z } from 'zod';
 
 /** The fixed choices a question can offer. "other" (free text) is always possible too. */
-export const CHOICES = ['keep', 'delete'] as const;
+export const CHOICES = ['keep', 'nominate'] as const;
 export type Choice = (typeof CHOICES)[number];
+
+/** A choice, as saved. Answers and manifests saved before images were nominated instead of deleted say "delete". */
+export const ChoiceSchema = z.preprocess((value) => (value === 'delete' ? 'nominate' : value), z.enum(CHOICES));
 
 const About = z.string().min(1);
 const Answered = z.string();
-const AnswerSchema = z.discriminatedUnion('choice', [
-  z.object({ about: About, choice: z.enum(CHOICES), answered: Answered }),
+const AnswerSchema = z.union([
+  z.object({ about: About, choice: ChoiceSchema, answered: Answered }),
   z.object({ about: About, choice: z.literal('other'), text: z.string().trim().min(1), answered: Answered }),
 ]);
 const AnswersFile = z.object({ version: z.literal(1), wiki: z.string(), answers: z.array(AnswerSchema) });

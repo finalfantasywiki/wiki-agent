@@ -25,7 +25,8 @@ export interface ReviewView {
     readonly pageUrl?: string;
     readonly thumbUrl?: string;
   }>;
-  readonly fileDeletions: ReadonlyArray<ReviewItem & { readonly pageUrl?: string; readonly thumbUrl?: string }>;
+  readonly fileDeletions: ReadonlyArray<ReviewFile>;
+  readonly fileNominations: ReadonlyArray<ReviewFile>;
   readonly pageCreations: ReadonlyArray<ReviewItem & { readonly text: string }>;
   readonly pageDeletions: ReadonlyArray<ReviewItem & { readonly usedBy: readonly string[] }>;
   readonly tags: { readonly total: number; readonly approved: number };
@@ -33,6 +34,8 @@ export interface ReviewView {
   /** Why entries are blocked: usages that can't be rewritten, and leftovers. */
   readonly blocked: readonly string[];
 }
+
+export type ReviewFile = ReviewItem & { readonly pageUrl?: string; readonly thumbUrl?: string };
 
 export interface ReviewItem {
   readonly id: string;
@@ -48,6 +51,7 @@ const LABELS: Record<ManifestEntry['kind'], string> = {
   'category-rename': 'Category renames',
   'file-rename': 'File renames',
   'file-delete': 'File deletions',
+  'file-nominate': 'Files to nominate for deletion',
   'page-create': 'Pages to create',
   'page-delete': 'Pages to delete',
   'category-tag': 'Category tags',
@@ -55,7 +59,7 @@ const LABELS: Record<ManifestEntry['kind'], string> = {
 
 export function reviewView(manifest: Manifest): ReviewView {
   const of = <K extends ManifestEntry['kind']>(kind: K) => manifest.entries.filter((entry): entry is Entry<K> => entry.kind === kind);
-  const item = (entry: Entry<'file-delete' | 'page-create' | 'page-delete'>): ReviewItem => ({
+  const item = (entry: Entry<'file-delete' | 'file-nominate' | 'page-create' | 'page-delete'>): ReviewItem => ({
     id: entry.id,
     title: entry.title,
     reason: entry.reason,
@@ -82,6 +86,7 @@ export function reviewView(manifest: Manifest): ReviewView {
       ...optional({ answer: question.answer, pageUrl: question.pageUrl, thumbUrl: question.thumbUrl }),
     })),
     fileDeletions: of('file-delete').map((file) => ({ ...item(file), ...optional({ pageUrl: file.pageUrl, thumbUrl: file.thumbUrl }) })),
+    fileNominations: of('file-nominate').map((file) => ({ ...item(file), ...optional({ pageUrl: file.pageUrl, thumbUrl: file.thumbUrl }) })),
     pageCreations: of('page-create').map((page) => ({ ...item(page), text: page.text })),
     pageDeletions: of('page-delete').map((page) => ({ ...item(page), usedBy: page.usedBy })),
     tags: { total: tags.length, approved: tags.filter((tag) => tag.approved).length },

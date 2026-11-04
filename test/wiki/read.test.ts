@@ -1,7 +1,8 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { findUsages, getFileInfo, getFileUsages, getPages, getTransclusions, listCategoryMembers, pagesExist } from '../../src/wiki/read.ts';
+import { findUsages, getFileInfo, getFileUsages, getPages, getTransclusions, listCategoryMembers, namespaceName, pagesExist, revisionHistory } from '../../src/wiki/read.ts';
 import { fakeWiki } from '../helpers/fake-wiki.ts';
+import { loadSiteInfo } from '../helpers/siteinfo.ts';
 
 const member = (title: string, type: 'page' | 'file' | 'subcat') => ({ title, ns: type === 'file' ? 6 : type === 'subcat' ? 14 : 0, type });
 
@@ -233,5 +234,46 @@ describe('getTransclusions', () => {
     const client = wiki();
     assert.deepEqual([...(await getTransclusions(client, ['A'], []))], [['A', []]]);
     assert.equal(client.requests.length, 0);
+  });
+});
+
+describe('namespaceName', () => {
+  test("the namespace's name, or \"\" for main; a colon alone isn't a namespace", () => {
+    const client = fakeWiki(() => assert.fail('no requests'));
+    loadSiteInfo(client);
+    assert.equal(namespaceName(client, 'Category:Images of Cloud Strife'), 'Category');
+    assert.equal(namespaceName(client, 'file:Cloud.png'), 'File');
+    assert.equal(namespaceName(client, 'Cloud Strife'), '');
+    assert.equal(namespaceName(client, 'Final Fantasy VII: Advent Children'), '');
+  });
+});
+
+describe('revisionHistory', () => {
+  const revision = (revid: number) => ({ revid, timestamp: `2026-01-0${revid}T00:00:00Z`, slots: { main: { content: `text ${revid}` } } });
+  const wiki = () =>
+    fakeWiki((params) =>
+      params.get('rvcontinue') === null
+        ? { continue: { rvcontinue: 'next', continue: '||' }, query: { pages: [{ title: 'User:Bot', revisions: [revision(3), revision(2)] }] } }
+        : { query: { pages: [{ title: 'User:Bot', revisions: [revision(1)] }] } },
+    );
+
+  test('newest first, across continuation', async () => {
+    const revisions = [];
+    for await (const rev of revisionHistory(wiki(), 'User:Bot', 2)) revisions.push(rev);
+    assert.deepEqual(revisions.map((rev) => [rev.revid, rev.content]), [[3, 'text 3'], [2, 'text 2'], [1, 'text 1']]);
+  });
+
+  test('stopping early fetches no more', async () => {
+    const client = wiki();
+    for await (const rev of revisionHistory(client, 'User:Bot', 2)) if (rev.revid === 3) break;
+    assert.equal(client.requests.length, 1);
+    assert.equal(client.requests[0]!.get('rvlimit'), '2');
+  });
+
+  test('a missing page has none', async () => {
+    const client = fakeWiki(() => ({ query: { pages: [{ title: 'User:Nobody', missing: true }] } }));
+    const revisions = [];
+    for await (const rev of revisionHistory(client, 'User:Nobody')) revisions.push(rev);
+    assert.deepEqual(revisions, []);
   });
 });
