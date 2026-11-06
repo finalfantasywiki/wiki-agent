@@ -3,8 +3,8 @@
 // stdout carries the protocol, so anything else goes to stderr.
 
 import { StdioServerTransport } from '@modelcontextprotocol/server/stdio';
-import { loadGuide, loadProfile } from '../profile.ts';
-import { createClient } from '../wiki/client.ts';
+import { loadGuide, loadProfile } from '../shared/profile/profile.ts';
+import { createClient } from '../shared/wiki/client.ts';
 import { createServer } from './server.ts';
 
 const name = process.argv[2];

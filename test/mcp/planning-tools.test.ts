@@ -4,11 +4,11 @@ import { existsSync, readFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { LoadedRules } from '../../src/file-renames/load-vocabulary.ts';
-import { buildVocabulary } from '../../src/file-renames/vocabulary.ts';
+import type { LoadedRules } from '../../src/tasks/file-renames/load-vocabulary.ts';
+import { buildVocabulary } from '../../src/tasks/file-renames/vocabulary.ts';
 import { createServer } from '../../src/mcp/server.ts';
-import { buildManifest, loadManifest, saveManifest } from '../../src/plans/manifest.ts';
-import { loadProfile } from '../../src/profile.ts';
+import { buildManifest, loadManifest, saveManifest } from '../../src/shared/plans/manifest.ts';
+import { loadProfile } from '../../src/shared/profile/profile.ts';
 import { fakeWorld } from '../helpers/fake-world.ts';
 import { connect, type TestClient } from '../helpers/mcp-client.ts';
 

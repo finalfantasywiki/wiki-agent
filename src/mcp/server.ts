@@ -9,7 +9,7 @@
 // entries). These write manifests to a local folder, never to the wiki.
 // Gallery cleanup: plan deleting a batch of /Gallery pages into a manifest,
 // answer its questions (saved per wiki, never on the wiki), and plan it again.
-// The review page (review-app.ts): the planning tools and show_manifest open
+// The review page (review/app.ts): the planning tools and show_manifest open
 // it in hosts that draw MCP Apps. Both kinds of plan can be planned again
 // (replan) from the request their manifest records.
 
@@ -17,19 +17,19 @@ import { writeFile } from 'node:fs/promises';
 import { registerAppTool } from '@modelcontextprotocol/ext-apps/server';
 import { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { validateFileName, type FileNameParts } from '../file-renames/file-name.ts';
-import { loadNamingRules, type LoadedRules } from '../file-renames/load-vocabulary.ts';
-import type { ReleaseVocab } from '../file-renames/vocabulary.ts';
-import { planGalleryCleanup } from '../gallery-cleanup/plan-gallery-cleanup.ts';
-import { planBatch, type BatchRequest } from '../plan-batch.ts';
-import { ANSWERS_DIR, CHOICES, loadAnswers, saveAnswers, type Answer, type AnswerInput } from '../plans/answers.ts';
-import { carryApprovals, loadManifest, MANIFESTS_DIR, saveManifest, setApproval, type Manifest } from '../plans/manifest.ts';
-import { renderManifest } from '../plans/render-manifest.ts';
-import type { Profile } from '../profile.ts';
-import { checkProfileReview, loadReviewedFiles, reviewText, type ReviewedFiles, type ReviewStatus } from '../profile-review.ts';
-import { userAgent, type WikiClient } from '../wiki/client.ts';
-import { OPENS_REVIEW_PAGE, registerReviewPage } from './review-app.ts';
-import { findUsages, getFileInfo, getPages, listCategoryMembers } from '../wiki/read.ts';
+import { validateFileName, type FileNameParts } from '../tasks/file-renames/file-name.ts';
+import { loadNamingRules, type LoadedRules } from '../tasks/file-renames/load-vocabulary.ts';
+import type { ReleaseVocab } from '../tasks/file-renames/vocabulary.ts';
+import { planGalleryCleanup } from '../tasks/gallery-cleanup/plan-gallery-cleanup.ts';
+import { planBatch, type BatchRequest } from '../tasks/plan-batch.ts';
+import { ANSWERS_DIR, CHOICES, loadAnswers, saveAnswers, type Answer, type AnswerInput } from '../shared/plans/answers.ts';
+import { carryApprovals, loadManifest, MANIFESTS_DIR, saveManifest, setApproval, type Manifest } from '../shared/plans/manifest.ts';
+import { renderManifest } from '../shared/plans/render-manifest.ts';
+import type { Profile } from '../shared/profile/profile.ts';
+import { checkProfileReview, loadReviewedFiles, reviewText, type ReviewedFiles, type ReviewStatus } from '../shared/profile/review.ts';
+import { userAgent, type WikiClient } from '../shared/wiki/client.ts';
+import { OPENS_REVIEW_PAGE, registerReviewPage } from './review/app.ts';
+import { findUsages, getFileInfo, getPages, listCategoryMembers } from '../shared/wiki/read.ts';
 
 export interface ServerContext {
   readonly profile: Profile;

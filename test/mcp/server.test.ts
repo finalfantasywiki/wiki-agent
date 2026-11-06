@@ -1,11 +1,11 @@
 import { after, before, describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import type { LoadedRules } from '../../src/file-renames/load-vocabulary.ts';
-import { buildVocabulary } from '../../src/file-renames/vocabulary.ts';
+import type { LoadedRules } from '../../src/tasks/file-renames/load-vocabulary.ts';
+import { buildVocabulary } from '../../src/tasks/file-renames/vocabulary.ts';
 import { createServer, WORKFLOW } from '../../src/mcp/server.ts';
-import { reviewText, type ReviewedFiles } from '../../src/profile-review.ts';
-import { loadProfile, type Profile } from '../../src/profile.ts';
+import { reviewText, type ReviewedFiles } from '../../src/shared/profile/review.ts';
+import { loadProfile, type Profile } from '../../src/shared/profile/profile.ts';
 import { fakeWiki } from '../helpers/fake-wiki.ts';
 import { connect, type TestClient } from '../helpers/mcp-client.ts';
 

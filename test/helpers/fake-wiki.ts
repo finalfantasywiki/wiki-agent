@@ -3,7 +3,7 @@
 // instead of the network.
 
 import { Mwn } from 'mwn';
-import type { WikiClient } from '../../src/wiki/client.ts';
+import type { WikiClient } from '../../src/shared/wiki/client.ts';
 
 export type FakeWiki = WikiClient & { readonly requests: URLSearchParams[] };
 
