@@ -10,6 +10,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { z } from 'zod';
+import type { Manifest } from './manifest.ts';
 
 /** The fixed choices a question can offer. "other" (free text) is always possible too. */
 export const CHOICES = ['keep', 'nominate'] as const;
@@ -72,4 +73,19 @@ export async function saveAnswers(wiki: string, inputs: readonly AnswerInput[], 
 function pathFor(wiki: string, dir: string): string {
   if (!/^[a-z0-9][a-z0-9-]*$/i.test(wiki)) throw new AnswersError(`${wiki} isn't a wiki profile name`);
   return join(dir, `${wiki}.json`);
+}
+
+/**
+ * The manifest with the user's own words added to the questions they answer,
+ * by the title asked about, for the LLM to act on. Rename questions offer no
+ * choices, so only answers in the user's words apply.
+ */
+export function withAnswers(manifest: Manifest, answers: ReadonlyMap<string, Answer>): Manifest {
+  return {
+    ...manifest,
+    entries: manifest.entries.map((entry) => {
+      const answer = entry.kind === 'question' && entry.answer === undefined ? answers.get(entry.about) : undefined;
+      return answer?.choice === 'other' ? { ...entry, answer: answer.text } : entry;
+    }),
+  };
 }

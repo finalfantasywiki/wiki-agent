@@ -86,9 +86,12 @@ src/                  library code
     file-renames/     the file-renaming task: vocabulary, file-name grammar, ...
     category-renames/ the category-renaming task: new pages from a model, members, old pages
     gallery-cleanup/  the gallery-cleanup task: reading /Gallery pages, sorting their images, planning a batch
-  mcp/                the MCP server: thin tools over the library (server.ts), stdio entry point (main.ts),
-                      and the in-chat review page in review/ (app.ts registers and bundles it, page.tsx is the
-                      React app, page.html its styles, view.ts what it shows of a manifest)
+  mcp/                the MCP server: createServer (server.ts), stdio entry point (main.ts), the instructions
+                      sent to the LLM (workflow.ts)
+    tools/            thin tools over the library, by group: wiki.ts, naming.ts, planning.ts,
+                      profile-review.ts; common.ts holds their shared context and helpers
+    review/           the in-chat review page: app.ts registers and bundles it, page.tsx is the React app,
+                      page.html its styles, view.ts what it shows of a manifest
 test/                 mirrors src/; fixtures/ holds small hand-written samples
 ```
 

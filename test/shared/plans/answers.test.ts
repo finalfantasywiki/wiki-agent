@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { loadAnswers, saveAnswers } from '../../../src/shared/plans/answers.ts';
+import { loadAnswers, saveAnswers, withAnswers, type Answer } from '../../../src/shared/plans/answers.ts';
+import { buildManifest } from '../../../src/shared/plans/manifest.ts';
 
 const temp = () => mkdtemp(join(tmpdir(), 'answers-'));
 const NOW = new Date('2026-11-02T12:00:00Z');
@@ -58,5 +59,39 @@ describe('answers', () => {
 
   test('the wiki name cannot point outside the folder', async () => {
     await assert.rejects(loadAnswers('../package', await temp()), /isn't a wiki profile name/);
+  });
+});
+
+describe('withAnswers', () => {
+  const manifest = buildManifest({
+    wiki: 'example',
+    api: 'https://example.org/api.php',
+    questions: [
+      { about: 'File:Mystery.png', question: 'Who is this?' },
+      { about: 'File:Figure.jpg', question: 'Keep it?', choices: ['keep', 'nominate'] },
+      { about: 'File:Asked.png', question: 'Which version?', answer: 'Already answered.' },
+    ],
+    references: { edits: [], usages: [], leftovers: [], blocked: [] },
+  });
+  const answers = new Map<string, Answer>([
+    ['File:Mystery.png', { about: 'File:Mystery.png', choice: 'other', text: 'Cloud, in his SOLDIER uniform.', answered: 'T' }],
+    ['File:Figure.jpg', { about: 'File:Figure.jpg', choice: 'keep', answered: 'T' }],
+    ['File:Asked.png', { about: 'File:Asked.png', choice: 'other', text: 'Newer words.', answered: 'T' }],
+  ]);
+  const answered = (about: string) => {
+    const entry = withAnswers(manifest, answers).entries.find((candidate) => candidate.kind === 'question' && candidate.about === about);
+    return entry?.kind === 'question' ? entry.answer : undefined;
+  };
+
+  test("adds the user's own words to the question they answer", () => {
+    assert.equal(answered('File:Mystery.png'), 'Cloud, in his SOLDIER uniform.');
+  });
+
+  test('leaves a fixed choice to the planner that applies it', () => {
+    assert.equal(answered('File:Figure.jpg'), undefined);
+  });
+
+  test('keeps an answer the manifest already has', () => {
+    assert.equal(answered('File:Asked.png'), 'Already answered.');
   });
 });
