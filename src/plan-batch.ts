@@ -4,7 +4,7 @@
 // delete are unused, or that a replacement's usages can all be pointed at the
 // file replacing it; and questions for the user. Nothing is written to the
 // wiki. Combines the file-renames and category-renames tasks, so it lives
-// above both.
+// above both. The manifest records the request, so it can be planned again.
 //
 // The client must have loaded the wiki's namespaces first:
 //   await client.getSiteInfo();
@@ -12,7 +12,7 @@
 import { planCategoryRenames, taggedByTemplate, type CategoryRenameRequest } from './category-renames/plan-category-renames.ts';
 import type { NamingRules } from './file-renames/file-name.ts';
 import { planNames, type RenameProposal } from './file-renames/plan-names.ts';
-import { buildManifest, type FileDeleteInput, type Manifest, type ManifestIssue, type QuestionInput } from './plans/manifest.ts';
+import { buildManifest, type FileDeleteInput, type Manifest, type ManifestIssue, type ManifestRequest, type QuestionInput } from './plans/manifest.ts';
 import { planReferenceEdits, type ReferencePlan } from './plans/reference-edits.ts';
 import { applyRules } from './plans/rules.ts';
 import type { Profile } from './profile.ts';
@@ -96,6 +96,25 @@ export async function planBatch(client: WikiClient, profile: Profile, rules: Nam
     categories: categories.map((category) => ({ ...category, warnings: [...category.warnings, ...taggedByTemplate(category, references)] })),
     questions: request.questions ?? [],
     references,
+    request: renamesRequest(request),
   });
   return applyRules(manifest, profile.rules, (title) => namespaceName(client, title));
+}
+
+/** The request as the manifest records it: what was proposed, before validation and numbering. */
+function renamesRequest(request: BatchRequest): ManifestRequest {
+  return {
+    task: 'renames',
+    files: (request.files ?? []).map(({ from, to, reason, confidence }) => ({ from, to, ...(reason === undefined ? {} : { reason }), ...(confidence === undefined ? {} : { confidence }) })),
+    categories: (request.categories ?? []).map(({ from, to, model, text, related }) => ({
+      from,
+      to,
+      ...(model === undefined ? {} : { model }),
+      ...(text === undefined ? {} : { text }),
+      ...(related === undefined ? {} : { related }),
+    })),
+    deletions: (request.deletions ?? []).map(({ title, reason, replaceWith }) => ({ title, reason, ...(replaceWith === undefined ? {} : { replaceWith }) })),
+    // Only what was asked: answers and previews are added when it's planned.
+    questions: (request.questions ?? []).map(({ about, question }) => ({ about, question })),
+  };
 }

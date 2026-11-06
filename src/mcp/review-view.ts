@@ -1,10 +1,11 @@
-// What the review page shows of a manifest: its questions, the files and
-// pages it deletes or creates, and counts for the rest. A manifest's page
+// What the review page shows of a manifest: its questions, its file and
+// category renames, the files and pages it deletes or creates, and counts for
+// the rest. A manifest's page
 // edits can run to megabytes of diffs, so only their number is sent; the
 // Markdown review file has them in full.
 
 import type { Choice } from '../plans/answers.ts';
-import type { Manifest, ManifestEntry } from '../plans/manifest.ts';
+import { startsApproved, type Manifest, type ManifestEntry } from '../plans/manifest.ts';
 import { CHOICE_LABELS } from '../plans/render-manifest.ts';
 
 type Entry<K extends ManifestEntry['kind']> = Extract<ManifestEntry, { kind: K }>;
@@ -25,6 +26,8 @@ export interface ReviewView {
     readonly pageUrl?: string;
     readonly thumbUrl?: string;
   }>;
+  readonly fileRenames: readonly ReviewFileRename[];
+  readonly categoryRenames: readonly ReviewCategoryRename[];
   readonly fileDeletions: ReadonlyArray<ReviewFile>;
   readonly fileNominations: ReadonlyArray<ReviewFile>;
   readonly pageCreations: ReadonlyArray<ReviewItem & { readonly text: string }>;
@@ -36,6 +39,36 @@ export interface ReviewView {
 }
 
 export type ReviewFile = ReviewItem & { readonly pageUrl?: string; readonly thumbUrl?: string };
+
+/** A rename. `flagged` when it has errors, a warning that isn't routine, or low confidence: it needs a look, approved or not. */
+export interface ReviewRename {
+  readonly id: string;
+  readonly from: string;
+  readonly to: string;
+  readonly reason?: string;
+  readonly approved: boolean;
+  readonly flagged: boolean;
+  /** Error messages; any means it can't be approved. */
+  readonly errors: readonly string[];
+  readonly warnings: readonly string[];
+}
+
+export type ReviewFileRename = ReviewRename & {
+  /** The name as proposed, before numbering. */
+  readonly requested: string;
+  readonly confidence?: number;
+  readonly pageUrl?: string;
+  readonly thumbUrl?: string;
+};
+
+export type ReviewCategoryRename = ReviewRename & {
+  /** How many pages and files are re-tagged. */
+  readonly members: number;
+  /** The new category page's text, unless the page exists already. */
+  readonly newPage?: string;
+  /** What happens to the old page once it's empty: nothing when there's no old page. */
+  readonly oldPage: 'deleted' | 'soft redirect' | 'none';
+};
 
 export interface ReviewItem {
   readonly id: string;
@@ -66,6 +99,16 @@ export function reviewView(manifest: Manifest): ReviewView {
     approved: entry.approved,
     errors: entry.errors.map((error) => error.message),
   });
+  const rename = (entry: Entry<'file-rename' | 'category-rename'>, confidence: number | undefined): ReviewRename => ({
+    id: entry.id,
+    from: entry.from,
+    to: entry.to,
+    ...(entry.kind === 'file-rename' && entry.reason !== undefined ? { reason: entry.reason } : {}),
+    approved: entry.approved,
+    flagged: !startsApproved(entry.errors, entry.warnings, confidence),
+    errors: entry.errors.map((error) => error.message),
+    warnings: entry.warnings.map((warning) => warning.message),
+  });
   const tags = of('category-tag');
   return {
     id: manifest.id,
@@ -84,6 +127,19 @@ export function reviewView(manifest: Manifest): ReviewView {
       question: question.question,
       choices: (question.choices ?? []).map((choice) => ({ choice, label: CHOICE_LABELS[choice] })),
       ...optional({ answer: question.answer, pageUrl: question.pageUrl, thumbUrl: question.thumbUrl }),
+    })),
+    fileRenames: of('file-rename').map((file) => ({
+      ...rename(file, file.confidence),
+      requested: file.requested,
+      ...(file.confidence === undefined ? {} : { confidence: file.confidence }),
+      ...optional({ pageUrl: file.pageUrl, thumbUrl: file.thumbUrl }),
+    })),
+    // A category rename has no confidence: it's what the LLM was asked to do.
+    categoryRenames: of('category-rename').map((category) => ({
+      ...rename(category, 1),
+      members: category.members.length,
+      ...(category.create === undefined ? {} : { newPage: category.create.text }),
+      oldPage: category.old === undefined ? 'none' : category.old.action === 'delete' ? 'deleted' : 'soft redirect',
     })),
     fileDeletions: of('file-delete').map((file) => ({ ...item(file), ...optional({ pageUrl: file.pageUrl, thumbUrl: file.thumbUrl }) })),
     fileNominations: of('file-nominate').map((file) => ({ ...item(file), ...optional({ pageUrl: file.pageUrl, thumbUrl: file.thumbUrl }) })),

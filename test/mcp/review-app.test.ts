@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { createServer } from '../../src/mcp/server.ts';
 import { REVIEW_PAGE_URI, reviewPageHtml } from '../../src/mcp/review-app.ts';
 import { reviewView } from '../../src/mcp/review-view.ts';
-import { buildManifest, saveManifest } from '../../src/plans/manifest.ts';
+import { buildManifest, saveManifest, setApproval } from '../../src/plans/manifest.ts';
 import { loadProfile } from '../../src/profile.ts';
 import { fakeWorld } from '../helpers/fake-world.ts';
 import { connect, type TestClient } from '../helpers/mcp-client.ts';
@@ -77,6 +77,96 @@ describe('reviewView', () => {
   });
 });
 
+describe('reviewView of renames', () => {
+  const renames = buildManifest(
+    {
+      wiki: 'finalfantasy',
+      api: 'https://finalfantasy.fandom.com/api.php',
+      files: [
+        {
+          from: 'File:Hero-battle.png',
+          to: 'File:Hero from FFVII battle render 2.png',
+          requested: 'File:Hero from FFVII battle render.png',
+          reason: 'battle pose',
+          confidence: 0.95,
+          warnings: [{ code: 'renumbered', message: 'numbered 2' }],
+          errors: [],
+          thumbUrl: 'https://img.test/Hero.png',
+        },
+        { from: 'File:Who.png', to: 'File:Villain from FFVII render.png', requested: 'File:Villain from FFVII render.png', confidence: 0.6, warnings: [], errors: [] },
+        { from: 'File:Stuck.png', to: 'File:Hero from FFVII still.png', requested: 'File:Hero from FFVII still.png', confidence: 0.9, warnings: [], errors: [] },
+      ],
+      categories: [
+        {
+          from: 'Category:FFVII hero images',
+          to: 'Category:Hero images from Final Fantasy VII',
+          create: { text: '{{category}}', model: undefined },
+          old: { action: 'delete' },
+          members: [{ title: 'File:Hero-battle.png' }, { title: 'File:Stuck.png' }],
+          warnings: [],
+          errors: [],
+        },
+      ],
+      references: { edits: [], usages: [{ from: 'File:Hero-battle.png', page: 'Hero', kind: 'shown', status: 'rewritten' }], leftovers: [{ from: 'File:Stuck.png', page: 'Hero', line: '{{#if:Stuck.png}}' }], blocked: ['File:Stuck.png'] },
+    },
+    { id: ID, now: new Date('2026-11-05T12:00:00Z') },
+  );
+
+  test('file renames with the name as requested, their confidence and previews', () => {
+    const [confident] = reviewView(renames).fileRenames;
+    assert.deepEqual(confident, {
+      id: 'f1',
+      from: 'File:Hero-battle.png',
+      to: 'File:Hero from FFVII battle render 2.png',
+      reason: 'battle pose',
+      approved: true,
+      flagged: false,
+      errors: [],
+      warnings: ['numbered 2'],
+      requested: 'File:Hero from FFVII battle render.png',
+      confidence: 0.95,
+      thumbUrl: 'https://img.test/Hero.png',
+    });
+  });
+
+  test('low confidence and errors are flagged, and stay flagged once approved', () => {
+    const flags = (manifest: typeof renames) => reviewView(manifest).fileRenames.map(({ id, approved, flagged, errors }) => ({ id, approved, flagged, errors: errors.length }));
+    assert.deepEqual(flags(renames), [
+      { id: 'f1', approved: true, flagged: false, errors: 0 },
+      { id: 'f2', approved: false, flagged: true, errors: 0 },
+      { id: 'f3', approved: false, flagged: true, errors: 1 },
+    ]);
+    assert.deepEqual(flags(setApproval(renames, ['f2'], true))[1], { id: 'f2', approved: true, flagged: true, errors: 0 });
+  });
+
+  test('category renames with their new page, member count and what happens to the old page', () => {
+    assert.deepEqual(reviewView(renames).categoryRenames, [
+      {
+        id: 'c1',
+        from: 'Category:FFVII hero images',
+        to: 'Category:Hero images from Final Fantasy VII',
+        approved: true,
+        flagged: false,
+        errors: [],
+        warnings: [],
+        members: 2,
+        newPage: '{{category}}',
+        oldPage: 'deleted',
+      },
+    ]);
+  });
+
+  test('summary rows for renames; not replannable without a request', () => {
+    const view = reviewView(renames);
+    assert.deepEqual(view.summary.map((row) => [row.label, row.total, row.approved, row.withErrors]), [
+      ['Category renames', 1, 1, 0],
+      ['File renames', 3, 1, 1],
+    ]);
+    assert.equal(view.replannable, false);
+    assert.deepEqual(view.blocked, ['Hero still mentions File:Stuck.png: {{#if:Stuck.png}}']);
+  });
+});
+
 describe('reviewPageHtml', () => {
   let html: string;
   before(async () => {
@@ -126,7 +216,7 @@ describe('the review page on the server', () => {
   test('the planning tools and show_manifest open it; review_manifest is for the page only', async () => {
     const { tools } = (await mcp.request('tools/list')) as { tools: Array<{ name: string; _meta?: { ui?: { resourceUri?: string; visibility?: string[] } } }> };
     const ui = Object.fromEntries(tools.filter((tool) => tool._meta?.ui !== undefined).map((tool) => [tool.name, tool._meta!.ui]));
-    assert.deepEqual(Object.keys(ui).sort(), ['plan_gallery_cleanup', 'replan', 'review_manifest', 'show_manifest']);
+    assert.deepEqual(Object.keys(ui).sort(), ['plan_gallery_cleanup', 'plan_renames', 'replan', 'review_manifest', 'show_manifest']);
     assert.equal(ui.plan_gallery_cleanup?.resourceUri, REVIEW_PAGE_URI);
     assert.deepEqual(ui.review_manifest?.visibility, ['app']);
   });

@@ -106,7 +106,7 @@ The profile's `vocabulary` section is only an override layer. Don't add FF token
 - mwn's `Wikitext` `Unbinder` loses nested regions (`<pre><nowiki>…</nowiki></pre>` comes back as `%UNIQ…%` placeholders). `src/wikitext/references.ts` masks those regions itself; don't use `unbind()`.
 - `imageusage` lists pages that show a file through a transcluded template, so a page can "use" a file its own wikitext never mentions. The reference to rewrite is in the template.
 - Fandom's image CDN serves a 404 placeholder to images requested with another site's Referer. The review page sets `<meta name="referrer" content="no-referrer">`; keep it.
-- `review-page.tsx` runs only in the host's browser: Node never imports it (type stripping doesn't do JSX), and tests can't run it. `tsc` checks it; check what it looks like in a browser.
+- `review-page.tsx` runs only in the host's browser: Node never imports it (type stripping doesn't do JSX), and tests can't run it. `tsc` checks it; check what it looks like in a browser. Put logic the page needs (e.g. which renames are flagged) in `review-view.ts`, where tests reach it.
 - MediaWiki never stores trailing whitespace, so planned page text shouldn't end in a newline either; it only adds noise to diffs.
 
 - **luaparse and non-ASCII strings.** The default `encodingMode: 'none'` leaves `StringLiteral.value` as `null`. The other modes reject characters above U+00FF. The fix:

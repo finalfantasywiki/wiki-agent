@@ -160,6 +160,15 @@ const Usage = z.object({
   via: z.string().optional(),
 });
 
+/** A plan_renames batch as the LLM proposed it, before validation and numbering. */
+const RenamesRequest = z.object({
+  task: z.literal('renames'),
+  files: z.array(z.object({ from: z.string(), to: z.string(), reason: z.string().optional(), confidence: z.number().min(0).max(1).optional() })),
+  categories: z.array(z.object({ from: z.string(), to: z.string(), model: z.string().optional(), text: z.string().optional(), related: z.string().optional() })),
+  deletions: z.array(z.object({ title: z.string(), reason: z.string(), replaceWith: z.string().optional() })),
+  questions: z.array(z.object({ about: z.string(), question: z.string() })),
+});
+
 export const ManifestSchema = z.object({
   version: z.literal(1),
   id: z.uuid(),
@@ -167,8 +176,8 @@ export const ManifestSchema = z.object({
   wiki: z.string(),
   api: z.url(),
   created: z.iso.datetime(),
-  /** What it was planned from, so it can be planned again (with new answers). Only some tasks record it. */
-  request: z.discriminatedUnion('task', [z.object({ task: z.literal('gallery-cleanup'), galleries: z.array(z.string()) })]).optional(),
+  /** What it was planned from, so it can be planned again (with new answers). Older manifests have none. */
+  request: z.discriminatedUnion('task', [z.object({ task: z.literal('gallery-cleanup'), galleries: z.array(z.string()) }), RenamesRequest]).optional(),
   entries: z.array(Entry),
   edits: z.array(PageEdit),
   usages: z.array(Usage),
@@ -431,7 +440,8 @@ function preview(input: PreviewInput): { pageUrl?: string; thumbUrl?: string } {
   return { ...(input.pageUrl === undefined ? {} : { pageUrl: input.pageUrl }), ...(input.thumbUrl === undefined ? {} : { thumbUrl: input.thumbUrl }) };
 }
 
-function startsApproved(errors: readonly ManifestIssue[], warnings: readonly ManifestIssue[], confidence: number | undefined): boolean {
+/** Whether an entry with these issues and this confidence is approved by default; any other needs a look before approving. */
+export function startsApproved(errors: readonly ManifestIssue[], warnings: readonly ManifestIssue[], confidence: number | undefined): boolean {
   return errors.length === 0 && (confidence ?? 0) >= CONFIDENCE_TO_APPROVE && warnings.every((warning) => ROUTINE_WARNINGS.has(warning.code));
 }
 
@@ -482,9 +492,18 @@ export function carryApprovals(previous: Manifest, next: Manifest): Manifest {
   };
 }
 
-/** What an entry changes, the same across plans: its kind and the title it changes. */
+/**
+ * What an entry changes, the same across plans: its kind and the title it
+ * changes, and for a rename the name it gets. A file rename is matched on the
+ * name as proposed, so a new number alone doesn't lose its approval, but a
+ * different name does.
+ */
 function changeKey(entry: Exclude<ManifestEntry, { kind: 'question' }>): string {
-  const title = entry.kind === 'file-rename' || entry.kind === 'category-rename' ? entry.from : entry.kind === 'category-tag' ? `${entry.title}\n${entry.category}` : entry.title;
+  const title =
+    entry.kind === 'file-rename' ? `${entry.from}\n${entry.requested}`
+    : entry.kind === 'category-rename' ? `${entry.from}\n${entry.to}`
+    : entry.kind === 'category-tag' ? `${entry.title}\n${entry.category}`
+    : entry.title;
   return `${entry.kind}\n${title}`;
 }
 

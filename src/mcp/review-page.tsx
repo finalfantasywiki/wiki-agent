@@ -8,10 +8,12 @@ import { useApp, useHostStyles } from '@modelcontextprotocol/ext-apps/react';
 import type { App } from '@modelcontextprotocol/ext-apps';
 import { useEffect, useState, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
-import type { ReviewFile, ReviewItem, ReviewView } from './review-view.ts';
+import type { ReviewCategoryRename, ReviewFile, ReviewFileRename, ReviewItem, ReviewView } from './review-view.ts';
 
 type Question = ReviewView['questions'][number];
 type Status = { readonly text: string; readonly error: boolean };
+/** Anything with an approve box. */
+type Approvable = Pick<ReviewItem, 'id' | 'approved' | 'errors'>;
 
 const IDLE: Status = { text: '', error: false };
 
@@ -71,14 +73,22 @@ function ReviewPage() {
       setAnswered((before) => new Map(before).set(question.id, given));
     }, 'Answer saved. Re-plan to apply your answers.');
 
-  const approve = (items: readonly ReviewItem[], approved: boolean) => {
+  const approve = (items: readonly Approvable[], approved: boolean) => {
     const ids = items.filter((item) => item.errors.length === 0 && item.approved !== approved).map((item) => item.id);
     if (ids.length === 0) return;
     void act(async (app) => {
       await call(app, 'set_approval', { id: view.id, entries: ids, approved });
       const changed = new Set(ids);
-      const update = <T extends ReviewItem>(list: readonly T[]) => list.map((item) => (changed.has(item.id) ? { ...item, approved } : item));
-      setView((before) => before && { ...before, fileDeletions: update(before.fileDeletions), fileNominations: update(before.fileNominations), pageCreations: update(before.pageCreations), pageDeletions: update(before.pageDeletions) });
+      const update = <T extends Approvable>(list: readonly T[]) => list.map((item) => (changed.has(item.id) ? { ...item, approved } : item));
+      setView((before) => before && {
+        ...before,
+        fileRenames: update(before.fileRenames),
+        categoryRenames: update(before.categoryRenames),
+        fileDeletions: update(before.fileDeletions),
+        fileNominations: update(before.fileNominations),
+        pageCreations: update(before.pageCreations),
+        pageDeletions: update(before.pageDeletions),
+      });
     }, `${approved ? 'Approved' : 'Unapproved'} ${ids.length} entr${ids.length === 1 ? 'y' : 'ies'}.`);
   };
 
@@ -119,6 +129,8 @@ function ReviewPage() {
           ))}
         </>
       )}
+      {view.categoryRenames.length > 0 && <CategoryRenames categories={view.categoryRenames} {...page} />}
+      {view.fileRenames.length > 0 && <FileRenames files={view.fileRenames} {...page} />}
       {view.fileNominations.length > 0 && (
         <>
           <Heading title="Files to nominate for deletion" items={view.fileNominations} {...page} />
@@ -180,7 +192,7 @@ async function call(app: App, name: string, args: Record<string, unknown>): Prom
 interface PageProps {
   readonly app: App | null;
   readonly busy: boolean;
-  readonly approve: (items: readonly ReviewItem[], approved: boolean) => void;
+  readonly approve: (items: readonly Approvable[], approved: boolean) => void;
 }
 
 function Summary({ rows }: { readonly rows: ReviewView['summary'] }) {
@@ -259,19 +271,94 @@ function FileCards({ files, ...page }: PageProps & { readonly files: readonly Re
   );
 }
 
+/**
+ * File renames as cards, the ones that need a look first: low confidence,
+ * warnings or errors (`flagged`). "Approve all" acts on the cards shown.
+ */
+function FileRenames({ files, ...page }: PageProps & { readonly files: readonly ReviewFileRename[] }) {
+  const flagged = files.filter((file) => file.flagged);
+  const [onlyFlagged, setOnlyFlagged] = useState(flagged.length > 0);
+  const shown = onlyFlagged ? flagged : files;
+  return (
+    <>
+      <Heading title="File renames" items={shown} count={onlyFlagged ? `${flagged.length} of ${files.length}` : undefined} {...page} />
+      <div className="bar">
+        <label className="check">
+          <input type="checkbox" checked={onlyFlagged} onChange={(event) => setOnlyFlagged(event.target.checked)} />
+          Only the ones that need a look ({flagged.length}): low confidence, warnings or errors
+        </label>
+      </div>
+      {shown.length === 0 && <p className="muted">None need a look.</p>}
+      <div className="cards wide">
+        {shown.map((file) => (
+          <div key={file.id} className={file.errors.length > 0 ? 'card blocked' : 'card'}>
+            <Thumbnail app={page.app} title={file.from} pageUrl={file.pageUrl} thumbUrl={file.thumbUrl} />
+            <Approval item={file} {...page} />
+            <div className="title"><Link app={page.app} url={file.pageUrl}>{file.from}</Link></div>
+            <div className="title">→ <strong>{file.to}</strong></div>
+            {file.confidence !== undefined && (
+              <div className={file.confidence < 0.8 ? 'warn' : 'muted'}>Confidence {Math.round(file.confidence * 100)}%</div>
+            )}
+            {file.reason !== undefined && <div className="muted">{file.reason}</div>}
+            <Issues item={file} />
+          </div>
+        ))}
+      </div>
+    </>
+  );
+}
+
+/** Category renames: the new page's text, and what happens to the members and the old page. */
+function CategoryRenames({ categories, ...page }: PageProps & { readonly categories: readonly ReviewCategoryRename[] }) {
+  const old = { deleted: 'deleted once empty', 'soft redirect': 'a soft redirect once empty', none: 'no old page' } as const;
+  return (
+    <>
+      <Heading title="Category renames" items={categories} {...page} />
+      {categories.map((category) => (
+        <div key={category.id} className="question">
+          <div className="body">
+            <Approval item={category} {...page} />
+            <div className="title">{category.from} → <strong>{category.to}</strong></div>
+            <div className="muted">{category.members} member(s) re-tagged · old page: {old[category.oldPage]}</div>
+            <Issues item={category} />
+            {category.newPage !== undefined ? (
+              <details>
+                <summary>New page text</summary>
+                <pre>{category.newPage}</pre>
+              </details>
+            ) : (
+              <div className="muted">The new page exists already.</div>
+            )}
+          </div>
+        </div>
+      ))}
+    </>
+  );
+}
+
+/** A rename's errors, then its warnings. */
+function Issues({ item }: { readonly item: Pick<ReviewFileRename, 'errors' | 'warnings'> }) {
+  return (
+    <>
+      {item.errors.map((message) => <div key={message} className="error">{message}</div>)}
+      {item.warnings.map((message) => <div key={message} className="warn">{message}</div>)}
+    </>
+  );
+}
+
 /** A section heading with "Approve all" and "Unapprove all" for its entries. */
-function Heading({ title, items, busy, approve }: PageProps & { readonly title: string; readonly items: readonly ReviewItem[] }) {
+function Heading({ title, items, count, busy, approve }: PageProps & { readonly title: string; readonly items: readonly Approvable[]; readonly count?: string | undefined }) {
   const open = items.some((item) => item.errors.length === 0);
   return (
     <h2>
-      {title} ({items.length})
+      {title} ({count ?? items.length})
       {open && <button disabled={busy} onClick={() => approve(items, true)}>Approve all</button>}
       {open && <button disabled={busy} onClick={() => approve(items, false)}>Unapprove all</button>}
     </h2>
   );
 }
 
-function Approval({ item, busy, approve }: PageProps & { readonly item: ReviewItem }) {
+function Approval({ item, busy, approve }: PageProps & { readonly item: Approvable }) {
   const blocked = item.errors.length > 0;
   return (
     <label className="check">

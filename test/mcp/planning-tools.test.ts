@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import type { LoadedRules } from '../../src/file-renames/load-vocabulary.ts';
 import { buildVocabulary } from '../../src/file-renames/vocabulary.ts';
 import { createServer } from '../../src/mcp/server.ts';
-import { loadManifest } from '../../src/plans/manifest.ts';
+import { buildManifest, loadManifest, saveManifest } from '../../src/plans/manifest.ts';
 import { loadProfile } from '../../src/profile.ts';
 import { fakeWorld } from '../helpers/fake-world.ts';
 import { connect, type TestClient } from '../helpers/mcp-client.ts';
@@ -33,7 +33,8 @@ let mcp: TestClient;
 let dir: string;
 before(async () => {
   dir = await mkdtemp(join(tmpdir(), 'wiki-agent-mcp-'));
-  mcp = await connect(createServer({ profile: await loadProfile('finalfantasy'), client, rules, manifestsDir: dir }));
+  // Its own answers, never the repo's.
+  mcp = await connect(createServer({ profile: await loadProfile('finalfantasy'), client, rules, manifestsDir: dir, answersDir: await mkdtemp(join(tmpdir(), 'wiki-agent-mcp-answers-')) }));
 });
 after(() => mcp.close());
 
@@ -77,6 +78,40 @@ describe('planning tools', () => {
     const manifest = await loadManifest(/Saved manifest ([0-9a-f-]{36})/.exec(textOf(result))![1]!, dir);
     const deletion = manifest.entries.find((entry) => entry.kind === 'file-delete');
     assert.equal(deletion?.kind === 'file-delete' ? deletion.replacedBy : undefined, 'File:Barret Wallace from FFVII battle model.jpg');
+  });
+
+  test('plan_renames says which manifest it saved, for the review page', async () => {
+    // callTool keeps only the text; the page reads structuredContent.
+    const result = (await mcp.request('tools/call', { name: 'plan_renames', arguments: { files: [{ from: 'Barret.jpg', to: 'Barret Wallace from FFVII battle model.jpg' }] } })) as {
+      content: Array<{ type: string; text?: string }>;
+      structuredContent?: unknown;
+    };
+    const id = /Saved manifest ([0-9a-f-]{36})/.exec(textOf(result))?.[1];
+    assert.deepEqual(result.structuredContent, { manifestId: id });
+  });
+
+  test('replan plans a rename batch again: approvals kept, answers in the user\'s words added', async () => {
+    const planned = await mcp.callTool('plan_renames', {
+      files: [{ from: 'Barret.jpg', to: 'Barret Wallace from FFVII battle model.jpg', confidence: 0.9 }],
+      questions: [{ about: 'File:Mystery.png', question: 'Who is this?' }],
+    });
+    const first = /Saved manifest ([0-9a-f-]{36})/.exec(textOf(planned))![1]!;
+    assert.equal((await mcp.callTool('set_approval', { id: first, entries: ['f1'], approved: false })).isError, false);
+    const answered = await mcp.callTool('answer_question', { id: first, answers: [{ question: 'q1', choice: 'other', text: 'Zack Fair.' }] });
+    assert.equal(answered.isError, false, textOf(answered));
+
+    const replanned = await mcp.callTool('replan', { id: first });
+    assert.equal(replanned.isError, false, textOf(replanned));
+    assert.match(textOf(replanned), new RegExp(`replacing ${first}`));
+    const second = await loadManifest(/Saved manifest ([0-9a-f-]{36})/.exec(textOf(replanned))![1]!, dir);
+    assert.deepEqual(
+      second.entries.map((entry) => (entry.kind === 'question' ? [entry.id, entry.answer] : [entry.id, entry.approved])),
+      [
+        ['q1', 'Zack Fair.'],
+        ['f1', false],
+      ],
+    );
+    assert.deepEqual(second.request, (await loadManifest(first, dir)).request);
   });
 
   test('the summary it returns has no diffs', async () => {
@@ -214,10 +249,11 @@ describe('gallery tools', () => {
     assert.match(textOf(refused), /q1: "other" needs the user's words/);
   });
 
-  test('replan refuses manifests that do not say what they were planned from', async () => {
-    const result = await mcp.callTool('plan_renames', { files: [{ from: 'Barret.jpg', to: 'Barret Wallace from FFVII battle model.jpg' }] });
-    const refused = await gallery.callTool('replan', { id: idOf(result) });
+  test('replan refuses older manifests, which do not say what they were planned from', async () => {
+    const old = buildManifest({ wiki: 'finalfantasy', api: 'https://finalfantasy.fandom.com/api.php', references: { edits: [], usages: [], leftovers: [], blocked: [] } }, { id: '00000000-0000-4000-8000-0000000000aa', now: new Date('2026-11-01T00:00:00Z') });
+    await saveManifest(old, dir);
+    const refused = await gallery.callTool('replan', { id: old.id });
     assert.equal(refused.isError, true);
-    assert.match(textOf(refused), /only gallery-cleanup manifests can be planned again/);
+    assert.match(textOf(refused), /older than that/);
   });
 });

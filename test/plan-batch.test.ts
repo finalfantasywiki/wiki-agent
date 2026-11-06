@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import type { NamingRules } from '../src/file-renames/file-name.ts';
 import { buildVocabulary } from '../src/file-renames/vocabulary.ts';
 import { planBatch } from '../src/plan-batch.ts';
+import { ManifestSchema } from '../src/plans/manifest.ts';
 import { loadProfile } from '../src/profile.ts';
 import { fakeWorld, type World } from './helpers/fake-world.ts';
 
@@ -91,6 +92,27 @@ describe('planBatch', () => {
     const manifest = await planBatch(fakeWorld(world), strict, rules, { categories: [{ from: OLD_CAT, to: NEW_CAT }] });
     const category = manifest.entries.find((entry) => entry.kind === 'category-rename');
     assert.deepEqual(category?.kind === 'category-rename' ? [category.approved, category.errors.map((error) => error.code)] : undefined, [false, ['create-not-allowed']]);
+  });
+
+  test('records the request as proposed, for planning again', async () => {
+    const manifest = await plan();
+    assert.deepEqual(manifest.request, {
+      task: 'renames',
+      files: [
+        { from: 'Barret.jpg', to: 'Barret Wallace from FFVII battle model.jpg', reason: 'battle model', confidence: 0.9 },
+        { from: 'Lonely.png', to: 'Aeris Gainsborough from FFVII model.png', confidence: 0.9 },
+        { from: 'Gone.png', to: 'Cloud Strife from FFVII model.png', confidence: 0.9 },
+        { from: 'Unused.png', to: 'Cloud Strife from FFVII screen.png', confidence: 0.9 },
+      ],
+      categories: [{ from: OLD_CAT, to: NEW_CAT, related: "[[:Category:Characters in Final Fantasy VII|characters in ''Final Fantasy VII'']]" }],
+      deletions: [
+        { title: 'Unused.png', reason: 'not used' },
+        { title: 'File:Used.png', reason: 'duplicate' },
+      ],
+      questions: [{ about: 'File:Mystery.png', question: 'Who is this?' }],
+    });
+    // And it's a valid manifest with it.
+    assert.deepEqual(ManifestSchema.parse(manifest).request, manifest.request);
   });
 
   test('an empty batch makes an empty manifest without asking the wiki', async () => {

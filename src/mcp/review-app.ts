@@ -48,7 +48,7 @@ export function registerReviewPage(server: McpServer, options: ReviewPageOptions
     'review_manifest',
     {
       title: 'Manifest for review',
-      description: "A saved manifest's questions, deletions, new pages and counts, for the review page.",
+      description: "A saved manifest's questions, renames, deletions, new pages and counts, for the review page.",
       inputSchema: z.object({ id: z.uuid() }),
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       // Only the page calls it; the LLM has show_manifest.

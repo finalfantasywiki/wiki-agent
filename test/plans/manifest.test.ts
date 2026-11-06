@@ -464,3 +464,55 @@ describe('carryApprovals', () => {
     assert.deepEqual(next.request, { task: 'gallery-cleanup', galleries: ['Hero/Gallery'] });
   });
 });
+
+describe('carryApprovals of renames', () => {
+  const plan = (files: Array<{ from: string; to: string; requested: string }>, to: string, id: string) =>
+    buildManifest(
+      {
+        wiki: 'finalfantasy',
+        api: 'https://finalfantasy.fandom.com/api.php',
+        files: files.map(({ from, to, requested }) => rename(from, to, { requested })),
+        categories: [{ from: OLD_CAT, to, create: undefined, old: undefined, members: [], errors: [], warnings: [] }],
+        references: { edits: [], usages: [{ from: 'File:A.png', page: 'P', kind: 'shown', status: 'rewritten' }, { from: 'File:B.png', page: 'P', kind: 'shown', status: 'rewritten' }], leftovers: [], blocked: [] },
+      },
+      { id, now: NOW },
+    );
+  // All start approved; the user unapproves them.
+  const before = setApproval(
+    plan(
+      [
+        { from: 'File:A.png', to: 'File:Hero from FFVII render.png', requested: 'File:Hero from FFVII render.png' },
+        { from: 'File:B.png', to: 'File:Villain from FFVII render.png', requested: 'File:Villain from FFVII render.png' },
+      ],
+      NEW_CAT,
+      ID,
+    ),
+    ['f1', 'f2', 'c1'],
+    false,
+  );
+
+  test('a file renamed to the same proposed name keeps its approval, even with a new number', () => {
+    const next = carryApprovals(
+      before,
+      plan(
+        [
+          { from: 'File:A.png', to: 'File:Hero from FFVII render 2.png', requested: 'File:Hero from FFVII render.png' },
+          { from: 'File:B.png', to: 'File:Villain from FFVII model.png', requested: 'File:Villain from FFVII model.png' },
+        ],
+        NEW_CAT,
+        '00000000-0000-4000-8000-000000000001',
+      ),
+    );
+    assert.deepEqual(next.entries.map((entry) => [entry.id, entry.kind !== 'question' && entry.approved]), [
+      ['f1', false],
+      // A different name is a different change: it gets its default.
+      ['f2', true],
+      ['c1', false],
+    ]);
+  });
+
+  test('a category renamed to a different name gets its default', () => {
+    const next = carryApprovals(before, plan([], 'Category:Other images', '00000000-0000-4000-8000-000000000001'));
+    assert.deepEqual(next.entries.map((entry) => [entry.id, entry.kind !== 'question' && entry.approved]), [['c1', true]]);
+  });
+});

@@ -17,6 +17,7 @@
     --accent: var(--color-text-info, #1d4ed8);
     --bad: var(--color-text-danger, #b91c1c);
     --good: var(--color-text-success, #15803d);
+    --warn: var(--color-text-warning, #a16207);
     font-family: var(--font-sans, system-ui, -apple-system, sans-serif);
     font-size: 14px;
   }
@@ -30,6 +31,7 @@
       --accent: var(--color-text-info, #93c5fd);
       --bad: var(--color-text-danger, #fca5a5);
       --good: var(--color-text-success, #86efac);
+      --warn: var(--color-text-warning, #fcd34d);
     }
   }
   :root[data-theme="dark"] {
@@ -41,6 +43,7 @@
     --accent: var(--color-text-info, #93c5fd);
     --bad: var(--color-text-danger, #fca5a5);
     --good: var(--color-text-success, #86efac);
+    --warn: var(--color-text-warning, #fcd34d);
   }
   * { box-sizing: border-box; }
   body { margin: 0; padding: 12px 16px 24px; background: var(--bg); color: var(--fg); line-height: 1.4; }
@@ -60,6 +63,7 @@
   a { color: var(--accent); }
   .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 8px; }
   .card { border: 1px solid var(--border); border-radius: 8px; padding: 8px; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+  .cards.wide { grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
   .card.blocked { border-color: var(--bad); }
   .card img { width: 100%; height: 120px; object-fit: contain; background: var(--bg-soft); border-radius: 4px; }
   .card .title { overflow-wrap: anywhere; }
@@ -68,6 +72,9 @@
   .question .body { display: flex; flex-direction: column; gap: 6px; min-width: 0; flex: 1; }
   .answered { color: var(--good); }
   .error { color: var(--bad); }
+  .warn { color: var(--warn); }
+  .question .title { overflow-wrap: anywhere; }
+  summary { cursor: pointer; color: var(--muted); }
   label.check { display: flex; gap: 6px; align-items: center; cursor: pointer; }
   pre { white-space: pre-wrap; overflow-wrap: anywhere; background: var(--bg-soft); padding: 6px; border-radius: 4px; margin: 4px 0 0; font-size: 12px; }
   ul.plain { padding-left: 18px; margin: 4px 0; }

@@ -10,7 +10,8 @@
 // Gallery cleanup: plan deleting a batch of /Gallery pages into a manifest,
 // answer its questions (saved per wiki, never on the wiki), and plan it again.
 // The review page (review-app.ts): the planning tools and show_manifest open
-// it in hosts that draw MCP Apps.
+// it in hosts that draw MCP Apps. Both kinds of plan can be planned again
+// (replan) from the request their manifest records.
 
 import { writeFile } from 'node:fs/promises';
 import { registerAppTool } from '@modelcontextprotocol/ext-apps/server';
@@ -20,8 +21,8 @@ import { validateFileName, type FileNameParts } from '../file-renames/file-name.
 import { loadNamingRules, type LoadedRules } from '../file-renames/load-vocabulary.ts';
 import type { ReleaseVocab } from '../file-renames/vocabulary.ts';
 import { planGalleryCleanup } from '../gallery-cleanup/plan-gallery-cleanup.ts';
-import { planBatch } from '../plan-batch.ts';
-import { ANSWERS_DIR, CHOICES, loadAnswers, saveAnswers, type AnswerInput } from '../plans/answers.ts';
+import { planBatch, type BatchRequest } from '../plan-batch.ts';
+import { ANSWERS_DIR, CHOICES, loadAnswers, saveAnswers, type Answer, type AnswerInput } from '../plans/answers.ts';
 import { carryApprovals, loadManifest, MANIFESTS_DIR, saveManifest, setApproval, type Manifest } from '../plans/manifest.ts';
 import { renderManifest } from '../plans/render-manifest.ts';
 import type { Profile } from '../profile.ts';
@@ -58,6 +59,7 @@ You help maintain a MediaWiki wiki: renaming files and categories, fixing every 
 3. Name it with the vocabulary (\`get_vocabulary\`) and the wiki's guide below, then check the names with \`validate_name\`. Leave numbers to planning.
 4. Plan with \`plan_renames\`, in batches: files, category renames, deletions and questions. It saves a manifest and tells you where; give the user the path to the Markdown file to review.
 5. Approve entries with \`set_approval\` only when the user tells you which.
+6. When the user answers a question in their own words, record it with \`answer_question\` and act on it: plan the batch again with \`plan_renames\` if the names change. \`replan\` plans the same batch again against the wiki as it is now, keeping the user's approvals.
 
 ## Deleting /Gallery pages
 1. A batch is one game's galleries: list them with \`list_category_members\` (e.g. on "Character galleries from Final Fantasy VII").
@@ -102,6 +104,19 @@ export function createServer(context: ServerContext): McpServer {
     const replaced = previous === undefined ? '' : ` (replacing ${previous.id})`;
     return {
       ...text(`Saved manifest ${manifest.id}${replaced}\n- JSON: ${paths.json}\n- Review (with diffs): ${paths.markdown}${look}\n\n${renderManifest(manifest, { edits: 'none' })}`),
+      structuredContent: { manifestId: manifest.id },
+    };
+  }
+
+  /** Plans a batch of renames (keeping `previous`'s approvals, when it's planned again), saves it, and says where. */
+  async function planRenames(request: BatchRequest, previous?: Manifest) {
+    await siteInfo();
+    const planned = withAnswers(await planBatch(client, profile, (await rules()).rules, request), await loadAnswers(profile.name, answersDir));
+    const manifest = previous === undefined ? planned : carryApprovals(previous, planned);
+    const paths = await save(manifest, manifestsDir);
+    const replaced = previous === undefined ? '' : ` (replacing ${previous.id})`;
+    return {
+      ...text(`Saved manifest ${manifest.id}${replaced}\n- JSON: ${paths.json}\n- Review (with diffs): ${paths.markdown}\n\n${renderManifest(manifest, { edits: 'none' })}`),
       structuredContent: { manifestId: manifest.id },
     };
   }
@@ -239,7 +254,8 @@ export function createServer(context: ServerContext): McpServer {
   );
 
   const issue = z.object({ about: z.string().min(1), question: z.string().min(1) });
-  server.registerTool(
+  registerAppTool(
+    server,
     'plan_renames',
     {
       title: 'Plan renames',
@@ -261,13 +277,9 @@ export function createServer(context: ServerContext): McpServer {
         questions: z.array(issue).optional(),
       }),
       annotations: LOCAL_WRITE,
+      _meta: OPENS_REVIEW_PAGE,
     },
-    async (request) => {
-      await siteInfo();
-      const manifest = await planBatch(client, profile, (await rules()).rules, request);
-      const paths = await save(manifest, manifestsDir);
-      return text(`Saved manifest ${manifest.id}\n- JSON: ${paths.json}\n- Review (with diffs): ${paths.markdown}\n\n${renderManifest(manifest, { edits: 'none' })}`);
-    },
+    async (request) => planRenames(request),
   );
 
   registerAppTool(
@@ -331,7 +343,7 @@ export function createServer(context: ServerContext): McpServer {
     'replan',
     {
       title: 'Plan again',
-      description: `Plans a saved gallery-cleanup manifest again on ${wiki}, as a new manifest: the wiki as it is now, with every saved answer applied, and the approvals the user gave carried over. Nothing is changed on the wiki.`,
+      description: `Plans a saved manifest (gallery cleanup or renames) again on ${wiki}, as a new manifest: the same request against the wiki as it is now, with every saved answer applied, and the approvals the user gave carried over. Nothing is changed on the wiki.`,
       inputSchema: z.object({ id: z.uuid() }),
       annotations: LOCAL_WRITE,
       _meta: OPENS_REVIEW_PAGE,
@@ -339,8 +351,9 @@ export function createServer(context: ServerContext): McpServer {
     async ({ id }) => {
       const previous = await loadManifest(id, manifestsDir);
       if (previous.wiki !== profile.name) throw new Error(`${id} was planned for ${previous.wiki}, not ${profile.name}`);
-      if (previous.request?.task !== 'gallery-cleanup') throw new Error(`${id} doesn't record what it was planned from; only gallery-cleanup manifests can be planned again`);
-      return planGalleries(previous.request.galleries, previous);
+      const request = previous.request;
+      if (request === undefined) throw new Error(`${id} doesn't record what it was planned from (it's older than that), so it can't be planned again`);
+      return request.task === 'gallery-cleanup' ? planGalleries(request.galleries, previous) : planRenames(request, previous);
     },
   );
 
@@ -484,4 +497,19 @@ async function fetchImage(fetchFn: typeof fetch, url: string, contact: string) {
   } catch (error) {
     return { type: 'text' as const, text: `(no thumbnail: ${(error as Error).message})` };
   }
+}
+
+/**
+ * The manifest with the user's own words added to the questions they answer,
+ * by the title asked about, for the LLM to act on. Rename questions offer no
+ * choices, so only answers in the user's words apply.
+ */
+function withAnswers(manifest: Manifest, answers: ReadonlyMap<string, Answer>): Manifest {
+  return {
+    ...manifest,
+    entries: manifest.entries.map((entry) => {
+      const answer = entry.kind === 'question' && entry.answer === undefined ? answers.get(entry.about) : undefined;
+      return answer?.choice === 'other' ? { ...entry, answer: answer.text } : entry;
+    }),
+  };
 }
